@@ -5,7 +5,7 @@ import { Segmented } from '../components/Segmented';
 import { formatSI } from '../format';
 import { SUPPLIES } from '../kit';
 import type { Board, PlacedPart, WireDoc } from './board';
-import { CATALOG, RESISTOR_VALUES, supplyFor, turnOf } from './catalog';
+import { CAPACITOR_VALUES, capacitorSpec, CATALOG, RESISTOR_VALUES, supplyFor, turnOf } from './catalog';
 import { isEmpty, size, type Selection } from './selection';
 import { sheetFor } from './specs';
 import type { BoardSim, BoardSnapshot, PartReading } from './sync';
@@ -136,6 +136,16 @@ function PartInspector(
           }}
         />
       )}
+      {part.kind === 'capacitor' && (
+        <Segmented
+          label="Capacitance"
+          options={CAPACITOR_VALUES.map((uf) => ({ value: String(uf), label: String(uf), detail: 'µF' }))}
+          value={String(Math.round(capacitorSpec(part.props).farads * 1e6))}
+          onChange={(uf) => {
+            props.onProp(part.id, 'uf', Number(uf));
+          }}
+        />
+      )}
       {part.kind === 'resistor' && (
         <ResistorPicker
           ohms={Number(part.props.ohms)}
@@ -165,6 +175,16 @@ function PartInspector(
         <p className="warning">Over its {formatSI(RED_LED.maxAmps, 'A', { trim: true })} rating: it’s heating up.</p>
       )}
       {reading?.over && part.kind === 'resistor' && <p className="warning">Hotter than it’s rated to run.</p>}
+      {reading?.capacitor?.reversed && (
+        <p className="warning">
+          Charged the wrong way round: minus is above plus. An electrolytic’s insulating layer only works one way,
+          which is why it has a pressure relief vent for when things go wrong. The datasheet gives no numbers for it,
+          so Bench only warns.
+        </p>
+      )}
+      {reading?.capacitor && !reading.capacitor.reversed && reading.over && (
+        <p className="warning">{`Charged past its ${String(reading.capacitor.ratedVolts)} V rating.`}</p>
+      )}
       {reading?.over && part.kind === 'knob' && (
         <p className="warning">
           {`Over its ${formatSI(KNOB_10K.ratedWatts, 'W', { trim: true })} rating: a carbon track run this hot wears and chars. The datasheet has no heat data, so Bench only warns.`}
@@ -297,6 +317,19 @@ function Readings(props: {
       rows.push(['Current out of the wiper', amps(knob.wiperAmps)]);
       rows.push(['Turning into heat', watts(reading.watts)]);
       rows.push(['Rated for', formatSI(KNOB_10K.ratedWatts, 'W', { trim: true })]);
+      break;
+    }
+    case 'capacitor': {
+      const cap = reading.capacitor;
+      if (!cap) break;
+      const flowing = reading.amps ?? 0;
+      rows.push(['Holding', volts(cap.held)]);
+      rows.push([flowing >= 0 ? 'Current in, filling it' : 'Current out, emptying it', amps(Math.abs(flowing))]);
+      // ½ × C × V²: what it took to charge it, and what it can give back.
+      rows.push(['Energy stored', formatSI(0.5 * cap.farads * cap.held ** 2, 'J', { digits: 3 })]);
+      const spec = capacitorSpec(part.props);
+      rows.push(['Leak across it, the worst allowed', formatSI(spec.ratedVolts / spec.leakAmps, 'Ω', { digits: 3 })]);
+      rows.push(['Rated for', formatSI(cap.ratedVolts, 'V', { trim: true })]);
       break;
     }
     case 'resistor':

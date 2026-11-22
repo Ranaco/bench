@@ -22,6 +22,8 @@ const PATHS: Readonly<Record<PartKind, readonly { readonly d: string; readonly c
   button: [{ d: 'M-60,0 H-24 M24,0 H60' }],
   // The track; the wiper and the dial are drawn by KnobWiper and KnobDial, wherever it's turned to.
   knob: [{ d: 'M-60,0 H-40 L-33.3,-9 L-20,9 L-6.7,-9 L6.7,9 L20,-9 L33.3,9 L40,0 H60' }],
+  // A straight plate for plus and a curved one for minus: an electrolytic only works one way round.
+  capacitor: [{ d: 'M0,-60 V-6 M-22,-6 H22 M-22,12 Q0,2 22,12 M0,7 V60' }],
   junction: [],
 };
 
@@ -56,6 +58,11 @@ export function PartSymbol({ kind }: { readonly kind: PartKind }) {
       {kind === 'junction' && <circle className="junction-dot" r="4.5" />}
       {kind === 'battery' && (
         <text className="sign" x="28" y="-22">
+          +
+        </text>
+      )}
+      {kind === 'capacitor' && (
+        <text className="sign" x="24" y="-14">
           +
         </text>
       )}

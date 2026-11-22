@@ -19,7 +19,9 @@ const MODELS: Readonly<Record<string, readonly [withArticle: string, bare: strin
   led: ['an LED', 'LED'],
   switch: ['a switch', 'switch'],
   potentiometer: ['a knob', 'knob'],
+  capacitor: ['a capacitor', 'capacitor'],
 };
+
 
 function modelOf(file: string): readonly [string, string] {
   const base = file.split('/').at(-1)?.replace(/\.ts$/, '') ?? file;

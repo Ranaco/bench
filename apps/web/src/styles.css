@@ -575,6 +575,29 @@ input[type='range']:active::-webkit-slider-thumb {
   border-top: 1.5px dashed var(--muted);
 }
 
+.charge-line {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.charge-supply {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.charge-tau {
+  stroke: var(--faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.key-charge::before {
+  border-top-color: var(--text);
+}
+
 .graph-note {
   margin: 8px 0 0;
   font-size: 12px;
@@ -990,6 +1013,24 @@ kbd {
 .knob.unwritten .symbol {
   stroke: var(--faint);
   stroke-dasharray: 4 4;
+}
+
+/* A capacitor: dashed until your model is written; orange when it's charged the wrong way round. */
+.capacitor.unwritten .symbol {
+  stroke: var(--faint);
+  stroke-dasharray: 4 4;
+}
+
+.capacitor.unwritten .label {
+  fill: var(--faint);
+}
+
+.part.capacitor.over .symbol {
+  stroke: var(--hot);
+}
+
+.part.capacitor.over .sign {
+  fill: var(--hot);
 }
 
 .knob-ends {

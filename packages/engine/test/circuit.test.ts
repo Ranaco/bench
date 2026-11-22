@@ -421,3 +421,44 @@ describe('Circuit, time', () => {
     expectConserved(c);
   });
 });
+
+describe('Circuit, parts that remember', () => {
+  it('tells parts how long a tick is, even on a solve that doesn’t move time on', () => {
+    const c = new Circuit();
+    const seen: number[] = [];
+    c.add({
+      name: 'WATCH',
+      stamp: (s: Stamp) => {
+        seen.push(s.dt);
+      },
+      current: (r: Readings) => {
+        seen.push(r.dt);
+        return 0;
+      },
+    } satisfies Part);
+    c.step(0);
+    c.step(0.003);
+    expect(seen.length).toBeGreaterThan(4);
+    expect(new Set(seen)).toEqual(new Set([TICK]));
+  });
+
+  it('reads each current from the solve, before the part reacts to the tick', () => {
+    // A part whose current is whatever it has counted, and which counts one more each tick.
+    const c = new Circuit();
+    let count = 0;
+    const counter: Part = {
+      name: 'COUNT',
+      stamp: () => undefined,
+      current: () => count,
+      settle: () => {
+        count++;
+      },
+    };
+    c.add(counter);
+    c.step(0.001);
+    expect(count).toBe(1);
+    expect(c.currentThrough(counter)).toBe(0); // what it read during the tick, not after
+    c.step(0);
+    expect(c.currentThrough(counter)).toBe(1); // a fresh solve reads it again
+  });
+});

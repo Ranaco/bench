@@ -1,6 +1,7 @@
-import { ENERGIZER_522, ENERGIZER_E91, KNOB_10K, QUARTER_WATT, RED_LED, SLIDE_SWITCH, TACT_SWITCH } from '@bench/engine';
+import { ENERGIZER_522, ENERGIZER_E91, KNOB_10K, QUARTER_WATT, RED_LED, SLIDE_SWITCH, TACT_SWITCH, UVR_25V } from '@bench/engine';
 import { describe, expect, it } from 'vitest';
 import { SUPPLIES } from '../kit';
+import { CAPACITOR_VALUES } from './catalog';
 import { sheetFor, shown, type SpecSheet } from './specs';
 
 const values = (sheet: SpecSheet | undefined) => sheet?.sections.flatMap((s) => s.fields.map((f) => f.value)) ?? [];
@@ -12,6 +13,9 @@ describe('spec sheets', () => {
     expect(values(sheetFor('switch', {})).sort()).toEqual(Object.values(SLIDE_SWITCH).sort());
     expect(values(sheetFor('button', {})).sort()).toEqual(Object.values(TACT_SWITCH).sort());
     expect(values(sheetFor('knob', {})).sort()).toEqual(Object.values(KNOB_10K).sort());
+    for (const uf of CAPACITOR_VALUES) {
+      expect(values(sheetFor('capacitor', { uf })).sort()).toEqual(Object.values(UVR_25V[uf]).sort());
+    }
     expect(values(sheetFor('battery', { supply: '9v' }))).toEqual([ENERGIZER_522.volts, ENERGIZER_522.ohms]);
     expect(values(sheetFor('battery', { supply: 'aa' }))).toEqual([2 * ENERGIZER_E91.volts, 2 * ENERGIZER_E91.ohms]);
   });

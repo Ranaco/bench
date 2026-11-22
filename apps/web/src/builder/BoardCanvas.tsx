@@ -17,7 +17,7 @@ import { flowSpeed, ledGlow } from '../flow';
 import { formatSI } from '../format';
 import type { Point } from '../geometry';
 import { moveParts, samePin, type Board, type Landing, type PartKind, type PinRef, type PlacedPart } from './board';
-import { CATALOG, GRID, KNOB_DIAL as DIAL, pinAt, snap, supplyFor, turnOf } from './catalog';
+import { capacitorSpec, CATALOG, GRID, KNOB_DIAL as DIAL, pinAt, snap, supplyFor, turnOf } from './catalog';
 import { liveTarget, measure, type MeterState, type ProbeTarget, type Tool } from './meter';
 import {
   boardBounds,
@@ -189,6 +189,8 @@ function labelLines(part: PlacedPart): string[] {
       return [part.label, formatSI(Number(part.props.ohms), 'Ω', { trim: true })];
     case 'knob':
       return [part.label, '10 kΩ'];
+    case 'capacitor':
+      return [part.label, `${String(capacitorSpec(part.props).farads * 1e6)} µF`];
     case 'led':
     case 'switch':
     case 'button':

@@ -1,4 +1,19 @@
-import { Battery, Ground, Junction, Led, Potentiometer, Resistor, SlideSwitch, Switch, TACT_SWITCH, type Node, type Part } from '@bench/engine';
+import {
+  Battery,
+  Electrolytic,
+  Ground,
+  Junction,
+  Led,
+  Potentiometer,
+  Resistor,
+  SlideSwitch,
+  Switch,
+  TACT_SWITCH,
+  UVR_25V,
+  type ElectrolyticSpec,
+  type Node,
+  type Part,
+} from '@bench/engine';
 import { RESISTOR_STOPS, SUPPLIES } from '../kit';
 import type { Point } from '../geometry';
 import type { PartKind, PlacedPart, Rotation } from './board';
@@ -33,6 +48,15 @@ export const RESISTOR_VALUES = RESISTOR_STOPS.filter((ohms) => ohms > 0);
 
 export function supplyFor(id: string | number | undefined) {
   return SUPPLIES.find((s) => s.id === id) ?? SUPPLIES[SUPPLIES.length - 1];
+}
+
+/** The capacitors on offer, µF: the Nichicon UVR 25 V ones, from small to large. */
+export const CAPACITOR_VALUES = [220, 330, 470, 1000, 2200] as const;
+
+/** A capacitor's datasheet row, from its saved value (1000 µF when the value isn't one on offer). */
+export function capacitorSpec(props: Readonly<Record<string, string | number>>): ElectrolyticSpec {
+  const value = CAPACITOR_VALUES.find((uf) => uf === Number(props.uf)) ?? 1000;
+  return UVR_25V[value];
 }
 
 /** Where a knob's dial sits, over its track: what you drag to turn it. */
@@ -125,6 +149,18 @@ export const CATALOG: Readonly<Record<PartKind, KindDef>> = {
     defaults: { turn: 0.5 },
     create: (label, nodes, props) => new Potentiometer(label, nodes.a, nodes.wiper, nodes.b, turnOf(props)),
   },
+  capacitor: {
+    kind: 'capacitor',
+    name: 'Capacitor',
+    blurb: 'Stores charge: it fills up, holds it, and gives it back',
+    pins: [
+      { id: 'plus', x: 0, y: -60, name: 'plus (+)' },
+      { id: 'minus', x: 0, y: 60, name: 'minus (−)' },
+    ],
+    box: { x: -24, y: -60, width: 60, height: 120 }, // to the right of its + sign
+    defaults: { uf: 1000 },
+    create: (label, nodes, props) => new Electrolytic(label, nodes.plus, nodes.minus, capacitorSpec(props)),
+  },
   ground: {
     kind: 'ground',
     name: 'Ground',
@@ -146,7 +182,7 @@ export const CATALOG: Readonly<Record<PartKind, KindDef>> = {
   },
 };
 
-export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'ground'];
+export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'capacitor', 'ground'];
 
 /** Rotates a point about the origin by a multiple of 90°. */
 export function rotate(p: Point, rotation: Rotation): Point {

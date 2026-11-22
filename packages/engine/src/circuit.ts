@@ -108,6 +108,12 @@ export class Circuit {
   private readonly missing = new Map<Part, Map<Method, NotWrittenYet>>();
   private readonly junctionVolts = new Map<Part, number[]>();
   private readonly internals = new Map<Part, Map<string, Node>>();
+  /**
+   * Each part's current as the last solve left it, read before the parts
+   * react to the tick (a capacitor moves on to its new charge, an LED to its
+   * new temperature), so it describes the same moment as the voltages do.
+   */
+  private readonly measured = new Map<Part, number | undefined>();
   private last: Solved | undefined;
   private ticks = 0;
   private pending = 0;
@@ -138,6 +144,7 @@ export class Circuit {
   /** Adds a part and returns it. */
   add<P extends Part>(part: P): P {
     this.parts.push(part);
+    this.measured.delete(part);
     return part;
   }
 
@@ -151,6 +158,7 @@ export class Circuit {
     if (index === -1) return;
     this.parts.splice(index, 1);
     this.missing.delete(part);
+    this.measured.delete(part);
     this.junctionVolts.delete(part);
     const internal = this.internals.get(part);
     if (internal) {
@@ -165,6 +173,7 @@ export class Circuit {
     if (index === -1) throw new Error(`${old.name} isn't in this circuit`);
     this.parts[index] = next;
     this.missing.delete(old);
+    this.measured.delete(old);
     this.junctionVolts.delete(old);
     const internal = this.internals.get(old);
     if (internal) {
@@ -183,6 +192,7 @@ export class Circuit {
     const due = Math.floor(this.pending / TICK + 1e-9);
     if (due === 0) {
       this.lastStep = this.solve();
+      this.measure();
       return this.lastStep;
     }
 
@@ -192,6 +202,7 @@ export class Circuit {
     for (let i = 0; i < due; i++) {
       const result = this.solve();
       iterations = Math.max(iterations, result.iterations);
+      this.measure();
       if (result.converged) this.settleParts();
       else {
         converged = false;
@@ -216,9 +227,13 @@ export class Circuit {
     return this.voltage(a) - this.voltage(b);
   }
 
-  /** Amps through `part`, or undefined when its current() isn't written yet. */
+  /**
+   * Amps through `part` in the last solve, or undefined when its current()
+   * isn't written yet. A part added since is asked now.
+   */
   currentThrough(part: Part): number | undefined {
     if (this.lacks(part, 'current') || this.lacks(part, 'stamp')) return undefined;
+    if (this.measured.has(part)) return this.measured.get(part);
     return this.call(part, 'current', () => part.current(this.readings()));
   }
 
@@ -265,11 +280,23 @@ export class Circuit {
     const last = this.last;
     return {
       time: this.time,
+      dt: TICK,
       ambient: this.ambient,
       voltage: (node) => this.voltage(node),
       across: (a, b) => this.across(a, b),
       branchCurrent: (branch) => (last ? -valueAt(last.solution, last.nodeCount + branch) : 0),
     };
+  }
+
+  /** Reads every part's current from the solve just made, before anything reacts to it. */
+  private measure(): void {
+    this.measured.clear();
+    const readings = this.readings();
+    for (const part of this.parts) {
+      if (this.lacks(part, 'stamp') || this.lacks(part, 'current')) continue;
+      const amps = this.call(part, 'current', () => part.current(readings));
+      if (!this.lacks(part, 'current')) this.measured.set(part, amps);
+    }
   }
 
   private settleParts(): void {
@@ -335,6 +362,7 @@ export class Circuit {
   private assemble(): Assembly {
     const assembly = new Assembly(
       this.time,
+      TICK,
       this.ambient,
       () => this.nodeNames.length - 1,
       (owner, name) => this.internalNode(owner, name),
@@ -457,6 +485,7 @@ class Assembly implements Stamp {
 
   constructor(
     readonly time: number,
+    readonly dt: number,
     readonly ambient: number,
     private readonly nodeCount: () => number,
     private readonly allocate: (owner: Part, name: string) => Node,

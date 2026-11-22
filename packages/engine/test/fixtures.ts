@@ -1,6 +1,7 @@
 import { expect } from 'vitest';
 import {
   NotWrittenYet,
+  TICK,
   type Branch,
   type Circuit,
   type Curve,
@@ -91,6 +92,7 @@ export function isWritten(attempt: () => void): boolean {
 /** A Stamp that records instead of solving, to inspect what a part stamps. */
 export class SpyStamp implements Stamp {
   readonly time = 0;
+  readonly dt = TICK;
   readonly ambient = 25;
   readonly curves: Curve[] = [];
   private readonly internals = new Map<string, Node>();

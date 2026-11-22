@@ -1,10 +1,10 @@
-import { Circuit, GROUND, NotWrittenYet, Potentiometer, Switch } from '@bench/engine';
+import { Capacitor, Circuit, GROUND, NotWrittenYet, Potentiometer, Switch, TICK } from '@bench/engine';
 import { describe, expect, it } from 'vitest';
-import { addWire, EMPTY_BOARD, removePart, setProp, type Board } from '../builder/board';
+import { addWire, EMPTY_BOARD, removePart, removeWire, setProp, type Board } from '../builder/board';
 import { ledLoop, place } from '../builder/fixtures';
 import { METER_START, type MeterState } from '../builder/meter';
 import { BoardSim } from '../builder/sync';
-import { A_KNOB, LIGHT_AN_LED, SWITCHES_AND_BUTTONS, type Lesson } from './lessons';
+import { A_KNOB, CAPACITORS, LIGHT_AN_LED, SWITCHES_AND_BUTTONS, type Lesson } from './lessons';
 import { advance, currentStep } from './progress';
 
 /** Plays a lesson against a board: checks the current step each frame, as the page does. */
@@ -84,6 +84,7 @@ const switchWritten = (() => {
   try {
     new Switch('S1', new Circuit().node('a'), GROUND).stamp({
       time: 0,
+      dt: TICK,
       ambient: 25,
       internal: () => GROUND,
       conductance: () => undefined,
@@ -206,6 +207,7 @@ const knobWritten = (() => {
     const c = new Circuit();
     new Potentiometer('RV1', c.node('a'), c.node('w'), GROUND).stamp({
       time: 0,
+      dt: TICK,
       ambient: 25,
       internal: () => GROUND,
       conductance: () => undefined,
@@ -313,4 +315,179 @@ describe.runIf(knobWritten)('Lesson 3: A knob', () => {
 
 if (!knobWritten) {
   it.todo('Lesson 3: needs your knob, in packages/engine/src/lesson-3-knob/potentiometer.ts');
+}
+
+/** Lesson 4 needs your capacitor (packages/engine/src/lesson-4-capacitors/capacitor.ts): all three of its jobs. */
+const capacitorWritten = (() => {
+  const atRest = { time: 0, dt: TICK, ambient: 25, voltage: () => 0, across: () => 0, branchCurrent: () => 0 };
+  try {
+    const cap = new Capacitor('C1', new Circuit().node('a'), GROUND, 1e-3);
+    cap.settle(atRest, TICK);
+    cap.current(atRest);
+    cap.stamp({
+      time: 0,
+      dt: TICK,
+      ambient: 25,
+      internal: () => GROUND,
+      conductance: () => undefined,
+      currentSource: () => undefined,
+      voltageSource: () => 0 as never,
+      junction: () => undefined,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof NotWrittenYet) return false;
+    throw error;
+  }
+})();
+
+/**
+ * The battery charging a capacitor through 1 kΩ; then, across the capacitor, a resistor and an LED (when `ledOhms`
+ * is given). `backwards` turns the capacitor round: minus towards the battery's +.
+ */
+function chargeLoop({
+  uf = 1000,
+  feedOhms = 1000,
+  ledOhms,
+  backwards = false,
+}: {
+  uf?: number;
+  feedOhms?: number;
+  ledOhms?: number;
+  backwards?: boolean;
+}) {
+  let board = EMPTY_BOARD;
+  const battery = place(board, 'battery');
+  const feed = place(battery.board, 'resistor', 0, 0, { ohms: feedOhms });
+  const cap = place(feed.board, 'capacitor', 0, 0, { uf });
+  const [toFeed, toMinus] = backwards ? (['minus', 'plus'] as const) : (['plus', 'minus'] as const);
+  board = addWire(cap.board, { part: battery.id, pin: 'plus' }, { part: feed.id, pin: 'a' });
+  board = addWire(board, { part: feed.id, pin: 'b' }, { part: cap.id, pin: toFeed });
+  board = addWire(board, { part: cap.id, pin: toMinus }, { part: battery.id, pin: 'minus' });
+  if (ledOhms !== undefined) {
+    const resistor = place(board, 'resistor', 0, 0, { ohms: ledOhms });
+    const led = place(resistor.board, 'led');
+    board = addWire(led.board, { part: cap.id, pin: 'plus' }, { part: resistor.id, pin: 'a' });
+    board = addWire(board, { part: resistor.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+    board = addWire(board, { part: led.id, pin: 'cathode' }, { part: cap.id, pin: 'minus' });
+  }
+  return { board, battery: battery.id, cap: cap.id };
+}
+
+/**
+ * The lesson's one-click version: a slide switch with common on the capacitor's +, side A to the battery's 1 kΩ
+ * (filling it), side B to a resistor and an LED (lighting the LED from it). Starts on A.
+ */
+function switchedLoop(uf: number, ledOhms: number) {
+  let board = EMPTY_BOARD;
+  const battery = place(board, 'battery');
+  const feed = place(battery.board, 'resistor', 0, 0, { ohms: 1000 });
+  const slide = place(feed.board, 'switch', 0, 0, { side: 'a' });
+  const cap = place(slide.board, 'capacitor', 0, 0, { uf });
+  const resistor = place(cap.board, 'resistor', 0, 0, { ohms: ledOhms });
+  const led = place(resistor.board, 'led');
+  board = addWire(led.board, { part: battery.id, pin: 'plus' }, { part: feed.id, pin: 'a' });
+  board = addWire(board, { part: feed.id, pin: 'b' }, { part: slide.id, pin: 'a' });
+  board = addWire(board, { part: slide.id, pin: 'common' }, { part: cap.id, pin: 'plus' });
+  board = addWire(board, { part: slide.id, pin: 'b' }, { part: resistor.id, pin: 'a' });
+  board = addWire(board, { part: resistor.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+  board = addWire(board, { part: led.id, pin: 'cathode' }, { part: cap.id, pin: 'minus' });
+  board = addWire(board, { part: cap.id, pin: 'minus' }, { part: battery.id, pin: 'minus' });
+  return { board, slide: slide.id };
+}
+
+const unplug = (board: Board, battery: string) => {
+  const wire = board.wires.find((w) => w.a.part === battery && w.a.pin === 'plus');
+  if (!wire) throw new Error('no wire on the battery’s +');
+  return removeWire(board, wire.id);
+};
+
+const capStep = (done: ReadonlySet<string>) => currentStep(CAPACITORS, done)?.id;
+const across = (cap: string): MeterState => ({
+  mode: 'volts',
+  leads: { red: { kind: 'pin', pin: { part: cap, pin: 'plus' } }, black: { kind: 'pin', pin: { part: cap, pin: 'minus' } } },
+});
+
+describe.runIf(capacitorWritten)('Lesson 4: Capacitors', () => {
+  it('passes the charge step once it’s half full, and only the right way round', () => {
+    const { board } = chargeLoop({});
+    expect(capStep(play(CAPACITORS, new BoardSim(), board, 0.4))).toBe('charge'); // R × C is 1 s: not yet
+    expect(capStep(play(CAPACITORS, new BoardSim(), board, 1))).toBe('full');
+    // Turned round, minus towards the battery's +: it fills the wrong way, warns, and the step waits.
+    const backwards = chargeLoop({ backwards: true });
+    const sim = new BoardSim();
+    expect(capStep(play(CAPACITORS, sim, backwards.board, 2))).toBe('charge');
+    expect(sim.getSnapshot().parts[backwards.cap]?.capacitor?.reversed).toBe(true);
+  });
+
+  it('wants the meter across it while it’s nearly full, then the battery unplugged', () => {
+    const { board, battery, cap } = chargeLoop({});
+    const sim = new BoardSim();
+    let done = play(CAPACITORS, sim, board, 1);
+    expect(capStep(done)).toBe('full');
+    done = play(CAPACITORS, sim, board, 1, done, across(cap)); // 2 s: 86 %, not yet
+    expect(capStep(done)).toBe('full');
+    done = play(CAPACITORS, sim, board, 2, done, across(cap));
+    expect(capStep(done)).toBe('hold');
+    done = play(CAPACITORS, sim, board, 1, done, across(cap)); // still plugged in
+    expect(capStep(done)).toBe('hold');
+    done = play(CAPACITORS, sim, unplug(board, battery), 1, done, across(cap));
+    expect(capStep(done)).toBe('glow');
+  });
+
+  it('lights an LED from the capacitor alone, but not while the battery’s still in', () => {
+    const plugged = chargeLoop({ ledOhms: 330 });
+    const sim = new BoardSim();
+    const UP_TO_GLOW = new Set(['charge', 'full', 'hold']);
+    let done = play(CAPACITORS, sim, plugged.board, 3, UP_TO_GLOW);
+    expect(capStep(done)).toBe('glow'); // lit, but by the battery
+    done = play(CAPACITORS, sim, unplug(plugged.board, plugged.battery), 1, done);
+    expect(capStep(done)).toBe('longer');
+  });
+
+  it('wants 3 seconds of glow from one charge: 1000 µF through 330 Ω fades too soon; 2200 µF, or 1 kΩ, lasts', () => {
+    const UP_TO_LONGER = new Set(['charge', 'full', 'hold', 'glow']);
+    for (const [uf, ohms, finished] of [
+      [1000, 330, false],
+      [2200, 330, true],
+      [1000, 1000, true],
+    ] as const) {
+      const loop = switchedLoop(uf, ohms);
+      const sim = new BoardSim();
+      let done = play(CAPACITORS, sim, loop.board, 12, UP_TO_LONGER); // slid to A: filling
+      done = play(CAPACITORS, sim, setProp(loop.board, loop.slide, 'side', 'b'), 6, done); // slid to B: the LED
+      expect(capStep(done) === undefined, `${String(uf)} µF, ${String(ohms)} Ω`).toBe(finished);
+    }
+  });
+
+  it('counts it full once it stops climbing, when its leak keeps it short of 90 % (10 kΩ)', () => {
+    // 10 kΩ against 2200 µF's 45.5 kΩ leak: it can only reach about 82 % of the battery.
+    for (const uf of [1000, 2200]) {
+      const { board, cap } = chargeLoop({ uf, feedOhms: 10000 });
+      const done = play(CAPACITORS, new BoardSim(), board, 60, new Set(['charge']), across(cap));
+      expect(capStep(done), `${String(uf)} µF`).toBe('hold');
+    }
+  });
+
+  it('won’t count an LED that took more than its 30 mA at first, even once that’s died down (100 Ω)', () => {
+    const loop = switchedLoop(1000, 100);
+    const sim = new BoardSim();
+    const UP_TO_GLOW = new Set(['charge', 'full', 'hold']);
+    let done = play(CAPACITORS, sim, loop.board, 6, UP_TO_GLOW);
+    done = play(CAPACITORS, sim, setProp(loop.board, loop.slide, 'side', 'b'), 3, done);
+    expect(capStep(done)).toBe('glow');
+  });
+
+  it('counts the switch slid away from the battery as unplugged', () => {
+    const loop = switchedLoop(1000, 330);
+    const sim = new BoardSim();
+    play(CAPACITORS, sim, loop.board, 3);
+    expect(sim.getSnapshot().unpowered).toBe(0);
+    play(CAPACITORS, sim, setProp(loop.board, loop.slide, 'side', 'b'), 1);
+    expect(sim.getSnapshot().unpowered).toBeGreaterThan(0.9);
+  });
+});
+
+if (!capacitorWritten) {
+  it.todo('Lesson 4: needs your capacitor, in packages/engine/src/lesson-4-capacitors/capacitor.ts');
 }

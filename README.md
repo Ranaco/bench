@@ -81,8 +81,9 @@ Pop-out windows (a window in its own browser window, for a second screen) are no
   less. (To make a plain drag on empty board pan instead of selecting, set `EMPTY_DRAG` in `BoardCanvas.tsx`.)
 - Add a ground to read pin voltages (hover a pin). Without one the circuit floats: every current is still right,
   but a voltage only means something measured from somewhere.
-- **Graph** plots the selected LED (or the first one): your model's curve, the datasheet's points, and where it
-  is right now.
+- **Graph** plots the selected LED or capacitor (with neither selected, the first capacitor, else the first LED).
+  For an LED: your model's curve, the datasheet's points, and where it is right now. For a capacitor: its voltage
+  over time.
 - **Spec sheet** (a tab beside the Meter, or *Spec sheet* in the Inspector) shows the selected part's datasheet:
   maker and part number, the document the numbers come from, and every number Bench simulates it with, each
   labelled with where it comes from (datasheet, standard, fitted to a datasheet graph, worked out, typical for the
@@ -93,6 +94,9 @@ Pop-out windows (a window in its own browser window, for a second screen) are no
   click a piece, or pick it from the list, to see what it does and where its shape comes from, and hide it to see
   behind it. The carbon track is tinted in its two pieces, pin 1 to the wiper and the wiper to pin 3, with their
   resistances from `legs()`. So far only the knob has a model.
+- **Capacitors**: pick 220 to 2200 µF in the Inspector, which shows what it's holding, the current filling or
+  emptying it, and the energy stored. The **Graph** draws the selected capacitor's voltage over the last 30 s, with
+  the battery's voltage and the 63 % it reaches in resistance × capacitance seconds.
 
 Every wire is a real 10 cm jumper with its own resistance and its own current, so a hand-built loop reads a hair
 under the same loop with perfect connections: about 1 µA less at 330 Ω, which is what three jumpers' 16 mΩ
@@ -135,7 +139,9 @@ packages/engine/src/
   lesson-2-switches/switch.ts     your switch: one pair of contacts, closed or open; the push button is one,
                                   and the slide switch is two of them
   lesson-3-knob/potentiometer.ts  your knob: two resistors sharing a wiper (legs() is written for you)
-  parts/                          built in: battery, resistor, wire, ground, junction, supply, slide switch
+  lesson-4-capacitors/capacitor.ts  your capacitor: the first part that remembers (its charge, tick to tick)
+  parts/                          built in: battery, resistor, wire, ground, junction, supply, slide switch,
+                                  electrolytic (your capacitor, plus the leak its datasheet allows)
 ```
 
 The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder the same way.
@@ -156,7 +162,14 @@ The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder th
   carrying only picoamps of leakage (an LED on a half-wired board) counts as settled once its voltage stops
   changing its current by more than the solver resolves, 1 pA: its voltage can't be pinned to the nanovolt there.
 - **Time.** `step(dt)` advances in fixed 1 ms ticks and carries the remainder, so results don't depend on frame
-  rate. Parts only react (`settle`) after a solve that converged.
+  rate. Parts only react (`settle`) after a solve that converged. Every stamp and reading carries the tick length
+  (`dt`), even a solve straight after an edit, which answers for one tick from now. Each part's current is read
+  from the solve before anything reacts to it, so it describes the same moment as the voltages.
+- **Capacitors.** Over one tick a capacitor is a conductance of farads ÷ dt plus a fixed current that holds it at
+  the voltage it ended the last tick on (backward Euler). It's exact for the arithmetic it does and close to the
+  smooth curve while resistance × capacitance is much longer than a tick: through 1 kΩ, 1000 µF fills to 63 % in
+  1 s to within 0.03 %. Straight across a battery (R × C around a tick) it ends at the right voltage, but the
+  first few milliseconds of the rush aren't the true shape.
 - **Parts.** A part describes itself with conductances, current and voltage sources, junctions and private internal
   nodes. `ThermalMass` turns power into temperature exactly, so heat and burn-out follow real thermal resistance.
 - **Checks.** `circuit.audit()` measures Kirchhoff's current law at every node and the power balance of the whole
@@ -177,12 +190,12 @@ The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder th
 | Estimates | LED and resistor heat capacities, and the resistor's burn temperature. Not on datasheets. |
 | Knob | Bourns PTV09 datasheet (REV. 01/25), a 9 mm carbon potentiometer: 10 kΩ ±20 % (the nominal is used); residual resistance "500 ohms or ±1 % max." (500 Ω is used, the most it allows; a real one may leave much less); linear taper B0, a straight line from 5 % to 95 % of the rotational travel; mechanical angle 280°; 0.05 W; 20 V DC. |
 | Knob in 3D | The PTV09A-4 drawing (rear mount, no bushing) with the 15 mm F-type shaft, and the datasheet's recommended board layout. Sizes printed there are used as printed: body 10.0 mm wide and 6.8 mm deep, its top 5.5 mm from the shaft's centre; shaft 6.0 mm across, its tip 15 mm up, with a 6 mm flat leaving 4.5 mm; a collar 1.1 mm deep; the metal ears 11.4 mm across, their legs 2.0 mm wide reaching 3.8 mm below the body, into slots 10.6 mm apart; pins 2.5 mm apart, 7.0 mm from the shaft's centre, 1.5 mm wide where they leave the body. The pin tips are drawn 0.8 × 0.5 mm so they fit the layout's 1.0 mm holes (the A-4 drawing doesn't print them). The rest of the outside is scaled off the drawing. The shaft's flat faces 40° clockwise from the top at full anticlockwise, and the pins in the middle, as drawn. Pins are numbered 1, 2, 3 from the left with the pins towards you, as in the board layout; the taper graph has pin 1 to pin 2 growing as the knob turns from its anticlockwise end. The inside (track, wiper, rotor, silver ends and ring) isn't on the datasheet: it's an illustration of how carbon knobs are built, and the 3D view says so. |
-| Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. |
+| Capacitors | Nichicon UVR series datasheet (CAT.8100M), 25 V row: 220, 330, 470, 1000 and 2200 µF, ±20 % (the nominal is used). Leakage is its "after 2 minutes at rated voltage" column, 0.01 × µF × V µA, treated as a resistance across the capacitor worked out at the rated voltage (25 V ÷ that), the worst it may be: every one then empties itself with a 100 s time constant. tan δ, ripple current, case size and leads are shown on the spec sheet, not simulated. |
+| Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. A capacitor has no series resistance (its tan δ is far too small to show at these speeds), its leak is a plain resistance though a real one's falls as it sits charged, and charged the wrong way round it only warns: the datasheet gives no numbers for that. |
 
 ### Not modelled yet
 
-Capacitors arrive in piece 4, with the time steps they need; inductors in piece 7, with motors and flyback
-diodes. Temperature doesn't yet shift the LED's curve, and batteries don't run down.
+Inductors arrive in piece 7, with motors and flyback diodes. Temperature doesn't yet shift the LED's curve, and batteries don't run down.
 
 ## Roadmap
 

@@ -1,13 +1,15 @@
 import { RED_LED } from '@bench/engine';
 import { lazy, Suspense, useCallback, useState, useSyncExternalStore } from 'react';
 import { BoardCanvas, type MenuTarget } from '../builder/BoardCanvas';
-import { CATALOG, turnOf } from '../builder/catalog';
+import type { PlacedPart } from '../builder/board';
+import { CATALOG, supplyFor, turnOf } from '../builder/catalog';
 import { measure } from '../builder/meter';
 import { Inspector } from '../builder/Inspector';
 import { Palette } from '../builder/Palette';
 import { SpecSheetPanel } from '../builder/SpecSheet';
 import { useSession, type Session } from '../builder/session';
-import type { BoardSim } from '../builder/sync';
+import { TRACE_SECONDS, type BoardSim } from '../builder/sync';
+import { ChargeGraph } from '../components/ChargeGraph';
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu';
 import { FloatingCard } from '../components/FloatingCard';
 import { IvGraph } from '../components/IvGraph';
@@ -261,13 +263,52 @@ function View3d() {
   );
 }
 
-/** The selected LED's current against its voltage: your model's curve, the datasheet's dots, and where it is now. */
+/**
+ * The Graph: a capacitor's voltage over time, or an LED's current against its voltage. It draws the selected one,
+ * or the first capacitor, or the first LED.
+ */
 export function GraphWindow() {
   const { board, sim, selection } = useSession();
   const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
+  const graphed = board.parts.filter((p) => p.kind === 'capacitor' || p.kind === 'led');
+  const chosen =
+    graphed.find((p) => selection.parts.includes(p.id)) ??
+    graphed.find((p) => p.kind === 'capacitor') ??
+    graphed.find((p) => p.kind === 'led');
+  if (chosen?.kind === 'capacitor') {
+    const trace = sim.trace(chosen.id);
+    const batteries = board.parts.filter((p) => p.kind === 'battery').map((p) => supplyFor(p.props.supply).volts);
+    const written = snapshot.parts[chosen.id]?.written !== false;
+    return (
+      <div className="pane pane-scroll graph-pane">
+        <p className="pane-note">
+          {written
+            ? `${chosen.label}’s voltage over the last ${String(TRACE_SECONDS)} seconds. Click an LED to graph it instead.`
+            : `${chosen.label} isn’t in the circuit until your capacitor is written.`}
+        </p>
+        <ChargeGraph
+          times={trace?.times ?? []}
+          volts={trace?.volts ?? []}
+          now={snapshot.time}
+          span={TRACE_SECONDS}
+          supply={batteries.length > 0 ? Math.max(...batteries) : undefined}
+        />
+        <p className="graph-note">
+          Charging, it climbs fast, then slower and slower: the fuller it is, the less push is left to fill it. Filling
+          from empty through a resistor, with nothing else on it, it reaches the dotted 63 % line in resistance ×
+          capacitance seconds.
+        </p>
+      </div>
+    );
+  }
+  return <LedGraph chosen={chosen} />;
+}
+
+/** The selected LED's current against its voltage: your model's curve, the datasheet's dots, and where it is now. */
+function LedGraph({ chosen }: { readonly chosen: PlacedPart | undefined }) {
+  const { sim } = useSession();
+  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
   const [curve] = useState(measureLed);
-  const leds = board.parts.filter((p) => p.kind === 'led');
-  const chosen = leds.find((p) => selection.parts.includes(p.id)) ?? leds.at(0);
   const reading = chosen && snapshot.parts[chosen.id];
   const operating =
     reading?.written && !reading.burnt && reading.amps !== undefined ? { volts: reading.volts, amps: reading.amps } : undefined;
@@ -277,7 +318,7 @@ export function GraphWindow() {
       <p className="pane-note">
         {chosen
           ? `${chosen.label}${reading?.burnt ? ', burnt out' : ''}. Click another LED to graph it instead.`
-          : 'Add an LED to see where it settles.'}
+          : 'Add an LED to see where it settles, or a capacitor to watch it fill.'}
       </p>
       <IvGraph curve={curve} datasheet={DATASHEET_POINTS} operating={operating} maxAmps={RED_LED.maxAmps} />
       <p className="graph-note">

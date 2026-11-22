@@ -54,6 +54,9 @@ export const DATASHEET_POINTS: readonly IvPoint[] = [
   [2.0, 20],
 ].map(([volts, milliamps]) => ({ volts, amps: milliamps / 1000 }));
 
+/** The faintest current the LED datasheet's graph plots: below it, there's nothing on record to see. */
+export const GLOW_AMPS = Math.min(...DATASHEET_POINTS.map((p) => p.amps));
+
 /** Measures the LED model across 0–3 V, or undefined while it isn't written. */
 export function measureLed(): IvPoint[] | undefined {
   try {

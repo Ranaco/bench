@@ -1,6 +1,22 @@
-import { Circuit, Ground, JUMPER, Led, Potentiometer, Resistor, SlideSwitch, Switch, Wire, type Node, type Part, type Unwritten } from '@bench/engine';
+import {
+  Battery,
+  Circuit,
+  Electrolytic,
+  Ground,
+  JUMPER,
+  Led,
+  Potentiometer,
+  Resistor,
+  SlideSwitch,
+  Switch,
+  Wire,
+  type Node,
+  type Part,
+  type Unwritten,
+} from '@bench/engine';
 import type { Board, PinRef, PlacedPart, WireDoc } from './board';
 import { flowSpeed } from '../flow';
+import { GLOW_AMPS } from '../kit';
 import { CATALOG } from './catalog';
 
 /**
@@ -47,6 +63,12 @@ export interface PartReading {
   readonly closed: boolean | undefined;
   /** For a knob: its two legs and the current along each. */
   readonly knob: KnobReading | undefined;
+  /** For a capacitor: the charge it's holding. */
+  readonly capacitor: CapacitorReading | undefined;
+  /** For an LED: seconds it's been glowing without a break (at least the faintest current its datasheet plots). */
+  readonly glowing: number | undefined;
+  /** For a glowing LED: the most current it's carried since it started glowing, A. */
+  readonly peakAmps: number | undefined;
   /** False while its stamp() isn't written, so it isn't in the circuit. */
   readonly written: boolean;
 }
@@ -59,6 +81,39 @@ export interface KnobReading {
   /** Amps out of the wiper: what's come in along both legs together. */
   readonly wiperAmps: number;
 }
+
+export interface CapacitorReading {
+  /** Volts it's holding, plus to minus: what its plates were charged to at the end of the last tick. */
+  readonly held: number;
+  readonly farads: number;
+  readonly ratedVolts: number;
+  /** Charged the wrong way round: minus above plus. */
+  readonly reversed: boolean;
+  /** How fast its voltage is changing, V/s, over the last half second: undefined until it has that much history. */
+  readonly rising: number | undefined;
+}
+
+/** A capacitor's voltage over the last little while: what the Graph draws. */
+export interface Trace {
+  /** Circuit time of each sample, s. */
+  readonly times: readonly number[];
+  readonly volts: readonly number[];
+}
+
+/** How far back a capacitor's trace goes, s. */
+export const TRACE_SECONDS = 30;
+
+/**
+ * Below this, a battery counts as unplugged. Far less than anything connected to one draws here: the smallest
+ * leak in the kit, the 220 µF capacitor's, takes 20 µA from a 9 V battery.
+ */
+const IDLE_AMPS = 1e-6;
+
+/** Reverse voltage a capacitor is allowed before it counts as charged the wrong way: well clear of the solver's noise. */
+const REVERSE_VOLTS = 1e-3;
+
+/** How far back a capacitor's rate of climb is measured, s: long enough to smooth over frame-to-frame jitter. */
+const RATE_SECONDS = 0.5;
 
 export interface WireReading {
   /** Amps from its first end to its second. */
@@ -81,6 +136,8 @@ export interface BoardSnapshot {
   readonly notWritten: readonly Unwritten[];
   /** Set when a part threw something other than "not written yet". */
   readonly error: string | undefined;
+  /** Seconds since every battery on the board stopped supplying current (unplugged, or switched off). */
+  readonly unpowered: number;
 }
 
 export const pinKey = (ref: PinRef) => `${ref.part}.${ref.pin}`;
@@ -95,6 +152,7 @@ const EMPTY: BoardSnapshot = {
   unsettled: [],
   notWritten: [],
   error: undefined,
+  unpowered: 0,
 };
 
 function sameProps(a: PlacedPart['props'], b: PlacedPart['props']): boolean {
@@ -111,6 +169,12 @@ export class BoardSim {
   private readonly parts = new Map<string, LivePart>();
   private readonly wires = new Map<string, LiveWire>();
   private readonly flows = new Map<string, number>();
+  /** Each capacitor's recent voltage, by part id. */
+  private readonly traces = new Map<string, { times: number[]; volts: number[] }>();
+  /** When each glowing LED started glowing, circuit time, and the most current it's carried since, by part id. */
+  private readonly litSince = new Map<string, { since: number; peak: number }>();
+  /** When the batteries last stopped supplying current, circuit time; undefined while one is. */
+  private quietSince: number | undefined = 0;
   private readonly listeners = new Set<() => void>();
   private snapshot: BoardSnapshot = EMPTY;
   private buildError: string | undefined;
@@ -133,6 +197,8 @@ export class BoardSim {
       this.circuit.remove(live.part);
       for (const node of Object.values(live.nodes)) this.circuit.release(node);
       this.parts.delete(id);
+      this.traces.delete(id);
+      this.litSince.delete(id);
     }
 
     this.buildError = undefined;
@@ -190,6 +256,7 @@ export class BoardSim {
       const amps = this.wireAmps(live);
       this.flows.set(id, (this.flows.get(id) ?? 0) + flowSpeed(amps) * dt);
     }
+    this.track();
     this.snapshot = this.read();
     for (const listener of this.listeners) listener();
   }
@@ -203,6 +270,53 @@ export class BoardSim {
   };
 
   readonly getSnapshot = (): BoardSnapshot => this.snapshot;
+
+  /** A capacitor's voltage over the last TRACE_SECONDS of circuit time, or undefined for anything else. */
+  trace(id: string): Trace | undefined {
+    return this.traces.get(id);
+  }
+
+  /**
+   * Keeps the record of things that happen over time, in circuit time: each capacitor's voltage, how long each LED
+   * has been glowing, and how long the batteries have been quiet.
+   */
+  private track(): void {
+    const c = this.circuit;
+    const now = c.time;
+    const failed = this.stepError !== undefined;
+    let supplying = false;
+    for (const [id, live] of this.parts) {
+      const part = live.part;
+      if (part instanceof Electrolytic) {
+        let trace = this.traces.get(id);
+        if (!trace) {
+          trace = { times: [], volts: [] };
+          this.traces.set(id, trace);
+        }
+        if (trace.times.at(-1) === now) {
+          trace.volts[trace.volts.length - 1] = part.held; // a re-solve with no time passed: the same moment
+        } else {
+          trace.times.push(now);
+          trace.volts.push(part.held);
+        }
+        const oldest = trace.times.findIndex((t) => t >= now - TRACE_SECONDS);
+        if (oldest > 0) {
+          trace.times.splice(0, oldest);
+          trace.volts.splice(0, oldest);
+        }
+      }
+      if (part instanceof Led) {
+        const amps = failed || part.burnt ? 0 : (c.currentThrough(part) ?? 0);
+        const lit = this.litSince.get(id);
+        if (amps < GLOW_AMPS) this.litSince.delete(id);
+        else if (!lit) this.litSince.set(id, { since: now, peak: amps });
+        else if (amps > lit.peak) this.litSince.set(id, { since: lit.since, peak: amps });
+      }
+      if (part instanceof Battery && !failed && Math.abs(c.currentThrough(part) ?? 0) >= IDLE_AMPS) supplying = true;
+    }
+    if (supplying) this.quietSince = undefined;
+    else this.quietSince ??= now;
+  }
 
   private create(doc: PlacedPart, nodes: Readonly<Record<string, Node>>): Part | undefined {
     try {
@@ -228,6 +342,7 @@ export class BoardSim {
     if (!fresh) return;
     this.circuit.replace(live.part, fresh);
     this.parts.set(doc.id, { doc, nodes: live.nodes, part: fresh });
+    this.traces.delete(doc.id); // a fresh one from the kit: a new trace, starting empty
   }
 
   private wireAmps(live: LiveWire): number {
@@ -263,6 +378,7 @@ export class BoardSim {
       unsettled: c.lastStep.unsettled,
       notWritten,
       error: this.stepError ?? this.buildError,
+      unpowered: this.quietSince === undefined ? 0 : c.time - this.quietSince,
     };
   }
 
@@ -275,7 +391,17 @@ export class BoardSim {
     const first = nodes.at(0);
     const second = nodes.at(1);
     const volts = failed || first === undefined || second === undefined ? 0 : c.across(first, second);
-    const base = { amps, volts, watts, written, closed: undefined, knob: undefined };
+    const base = {
+      amps,
+      volts,
+      watts,
+      written,
+      closed: undefined,
+      knob: undefined,
+      capacitor: undefined,
+      glowing: undefined,
+      peakAmps: undefined,
+    };
     if (part instanceof Switch || part instanceof SlideSwitch) {
       const over = Math.abs(amps ?? 0) > part.spec.ratedAmps;
       return { ...base, celsius: undefined, burnt: false, over, closed: part instanceof Switch ? part.closed : undefined };
@@ -290,13 +416,38 @@ export class BoardSim {
     }
     if (part instanceof Led) {
       const over = !part.burnt && (amps ?? 0) > part.spec.maxAmps;
-      return { ...base, celsius: part.temperature, burnt: part.burnt, over };
+      const lit = this.litSince.get(live.doc.id);
+      return {
+        ...base,
+        celsius: part.temperature,
+        burnt: part.burnt,
+        over,
+        glowing: lit && c.time - lit.since,
+        peakAmps: lit?.peak,
+      };
+    }
+    if (part instanceof Electrolytic) {
+      // Its watts are going into (or coming back out of) its charge, not into heat.
+      const { ratedVolts, farads } = part.spec;
+      const reversed = written && part.held < -REVERSE_VOLTS;
+      const capacitor = { held: written ? part.held : 0, farads, ratedVolts, reversed, rising: written ? this.rateOf(live.doc.id) : undefined };
+      return { ...base, celsius: undefined, burnt: false, over: reversed || part.held > ratedVolts, capacitor };
     }
     if (part instanceof Resistor) {
       const over = !part.burnt && part.temperature > part.spec.maxCelsius;
       return { ...base, celsius: part.temperature, burnt: part.burnt, over };
     }
     return { ...base, celsius: undefined, burnt: false, over: false };
+  }
+
+  /** A capacitor's voltage change per second over its last RATE_SECONDS of trace. */
+  private rateOf(id: string): number | undefined {
+    const trace = this.traces.get(id);
+    const now = trace?.times.at(-1);
+    if (!trace || now === undefined) return undefined;
+    const back = trace.times.findLastIndex((t) => t <= now - RATE_SECONDS);
+    if (back === -1) return undefined;
+    return ((trace.volts.at(-1) ?? 0) - (trace.volts[back] ?? 0)) / (now - (trace.times[back] ?? now));
   }
 
   private isWired(id: string): boolean {

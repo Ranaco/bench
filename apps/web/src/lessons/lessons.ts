@@ -1,10 +1,10 @@
 import { RED_LED } from '@bench/engine';
 import { netsOf, type Board, type PartKind, type PinRef, type PlacedPart } from '../builder/board';
-import { CATALOG } from '../builder/catalog';
+import { CATALOG, supplyFor } from '../builder/catalog';
 import type { MeterState } from '../builder/meter';
 import type { BoardSnapshot, PartReading } from '../builder/sync';
 import { formatSI } from '../format';
-import { DATASHEET_POINTS } from '../kit';
+import { GLOW_AMPS } from '../kit';
 
 /**
  * Lessons are data: which parts they unlock, and the steps to get through.
@@ -49,8 +49,6 @@ function liveLeds({ board, snapshot }: LessonState): PartReading[] {
   });
 }
 
-/** The faintest current the LED datasheet's graph plots: below it, there's nothing on record to see. */
-const GLOW_AMPS = Math.min(...DATASHEET_POINTS.map((p) => p.amps));
 
 const ma = (amps: number) => formatSI(amps, 'A', { trim: true });
 
@@ -323,13 +321,118 @@ export const A_KNOB: Lesson = {
     'A knob splits a voltage wherever you set it (a divider), or adds a resistance you can change (a dimmer). Next, capacitors: a part that stores charge, so things happen over time. Build mode has the knob too.',
 };
 
-export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB];
+/** Each capacitor that's in the circuit, with what it's holding and how fast that's changing. */
+function capacitors({ board, snapshot }: LessonState) {
+  return ofKind(board, 'capacitor').flatMap((part) => {
+    const reading = snapshot.parts[part.id];
+    return reading?.written && reading.capacitor ? [{ part, ...reading.capacitor }] : [];
+  });
+}
+
+/**
+ * Climbing by less than this share of its voltage per second counts as full for the circuit it's in: a big resistor
+ * fills it slowly, and its own leak then stops it short of the battery's voltage, so "nearly the battery" may never
+ * come. At 0.5 % a second it's within about 1 % of where it's heading, whatever the resistor (for R × C up to 2 s;
+ * slower ones stop climbing that much before they're quite as close).
+ */
+const SETTLED_RATE = 0.005;
+
+/** The biggest battery on the board, V with nothing connected, or undefined when there isn't one. */
+function biggestBattery(board: Board): number | undefined {
+  const volts = ofKind(board, 'battery').map((b) => supplyFor(b.props.supply).volts);
+  return volts.length > 0 ? Math.max(...volts) : undefined;
+}
+
+/**
+ * Filled to at least `share` of the biggest battery's voltage, the right way round, or as full as its circuit will
+ * get it: holding at least a volt and no longer climbing.
+ */
+function chargedTo(state: LessonState, share: number): boolean {
+  const supply = biggestBattery(state.board);
+  if (supply === undefined) return false;
+  return capacitors(state).some(
+    (c) => c.held >= share * supply || (c.held >= 1 && c.rising !== undefined && Math.abs(c.rising) < SETTLED_RATE * c.held),
+  );
+}
+
+/**
+ * Seconds the batteries have to stay quiet before they count as unplugged: long enough that a battery merely between
+ * two pulses of current doesn't pass for one taken out.
+ */
+const UNPLUGGED_SECONDS = 0.5;
+/** How long Lesson 4's last step wants an LED kept glowing on one charge, s. */
+const GLOW_SECONDS = 3;
+
+/** An LED glowing from a capacitor alone, without going over its rating, with a resistor in its loop. */
+function glowingFromCapacitor(state: LessonState, seconds: number): boolean {
+  const unpowered = state.snapshot.unpowered;
+  if (unpowered < UNPLUGGED_SECONDS || unpowered < seconds) return false;
+  // Glowing that long, and never past its rating since it lit: a rush through too small a resistor doesn't count
+  // once it's died down.
+  const glowing = liveLeds(state).some((led) => (led.glowing ?? -1) >= seconds && (led.peakAmps ?? 0) <= RED_LED.maxAmps);
+  return glowing && ofKind(state.board, 'resistor').some((r) => carrying(state, r));
+}
+
+export const CAPACITORS: Lesson = {
+  id: 'capacitors',
+  number: 4,
+  title: 'Capacitors',
+  goal: 'Fill a capacitor, unplug the battery, and light an LED with the charge it kept.',
+  parts: ['battery', 'resistor', 'led', 'switch', 'capacitor', 'ground'],
+  steps: [
+    {
+      id: 'charge',
+      title: 'Charge a capacitor',
+      detail:
+        'Wire a loop: the battery’s +, a 1 kΩ resistor, the capacitor’s + leg, its − leg, back to the battery’s −. It only works one way round: + towards +. Then watch it fill in the Graph window (the tab beside the Inspector): fast at first, then slower and slower.',
+      passes: (state) => chargedTo(state, 0.5),
+    },
+    {
+      id: 'full',
+      title: 'Measure it nearly full',
+      detail:
+        'Set the meter to Volts: red on the capacitor’s +, black on its −, or pins wired to them. Wait until it reads nearly the battery’s voltage, or stops climbing. It never quite gets all the way: the fuller it is, the less push is left to fill it. Through a big resistor it’s slower still, and its own small leak stops it a little short.',
+      passes: (state) => {
+        const { red, black } = state.meter.leads;
+        if (state.meter.mode !== 'volts' || red?.kind !== 'pin' || black?.kind !== 'pin') return false;
+        const net = netsOf(state.board);
+        const across = capacitors(state).some(
+          (c) => net(red.pin) === net({ part: c.part.id, pin: 'plus' }) && net(black.pin) === net({ part: c.part.id, pin: 'minus' }),
+        );
+        return across && chargedTo(state, 0.9);
+      },
+    },
+    {
+      id: 'hold',
+      title: 'Unplug the battery',
+      detail:
+        'Take a wire off the battery, or delete it. The capacitor keeps its charge: the meter still reads it. It isn’t perfect: at the most its datasheet allows, it leaks away two-thirds of its voltage every 100 seconds.',
+      passes: (state) => state.snapshot.unpowered >= UNPLUGGED_SECONDS && capacitors(state).some((c) => c.held >= 1),
+    },
+    {
+      id: 'glow',
+      title: 'Light an LED with it',
+      detail:
+        'With the battery still unplugged, wire a 330 Ω resistor and an LED across the capacitor: its + to the resistor, the resistor to the LED’s anode, the LED’s cathode back to its −. The LED lights, then fades as the charge runs out. To fill it again in one click, use a slide switch: common to the capacitor’s +, side A to the battery’s resistor, side B to the LED’s. Slide to A to fill it, to B to light the LED from it.',
+      passes: (state) => glowingFromCapacitor(state, 0),
+    },
+    {
+      id: 'longer',
+      title: `Keep it glowing for ${String(GLOW_SECONDS)} seconds`,
+      detail: `Make one charge keep the LED glowing for ${String(GLOW_SECONDS)} seconds: fill it all the way first, with nothing else drawing on it. A bigger capacitor holds more charge; a bigger resistor lets it out more slowly. Guess which you’d change, then try (below 330 Ω, the LED gets more than its 30 mA at first).`,
+      passes: (state) => glowingFromCapacitor(state, GLOW_SECONDS),
+    },
+  ],
+  outro:
+    'A capacitor fills and empties along the same curve: fast at first, then slower and slower. How fast is set by resistance × capacitance: through 1 kΩ, 1000 µF gets 63 % of the way in 1 second. More resistance or more capacitance, and everything takes longer. Next, transistors: a small current switching a big one. Build mode has capacitors too.',
+};
+
+export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS];
 
 export const lessonById = (id: string) => LESSONS.find((lesson) => lesson.id === id);
 
 /** What's coming, from the roadmap: shown locked, so the path ahead is visible. */
 export const COMING: readonly { readonly number: number; readonly title: string; readonly blurb: string }[] = [
-  { number: 4, title: 'Capacitors', blurb: 'A part that stores charge: fill one, then watch an LED fade as it empties. Your fourth part.' },
   { number: 5, title: 'Transistors', blurb: 'A small signal switches a big current: how a microcontroller drives more than an LED.' },
   { number: 6, title: 'A microcontroller', blurb: 'An ESP32 runs your code and reads your buttons and your knob: floating inputs, pull-ups, and a voltage as a number.' },
   { number: 7, title: 'Motors', blurb: 'H-bridges, flyback diodes and brownouts, where your capacitors and transistors come back.' },

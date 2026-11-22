@@ -42,6 +42,13 @@ export interface Curve {
 export interface Stamp {
   /** Seconds since the circuit started. */
   readonly time: number;
+  /**
+   * Seconds this solve moves time forward: one tick. A part whose behaviour
+   * depends on time (a capacitor) needs it. A solve that doesn't move time on,
+   * straight after an edit, still answers for one tick: what the circuit
+   * would look like a moment from now.
+   */
+  readonly dt: number;
   /** Temperature of the air around the circuit, °C. */
   readonly ambient: number;
   /**
@@ -67,6 +74,13 @@ export interface Stamp {
 export interface Readings {
   /** Seconds since the circuit started. */
   readonly time: number;
+  /**
+   * Seconds this solve moves time forward: one tick. A part whose behaviour
+   * depends on time (a capacitor) needs it. A solve that doesn't move time on,
+   * straight after an edit, still answers for one tick: what the circuit
+   * would look like a moment from now.
+   */
+  readonly dt: number;
   /** Temperature of the air around the circuit, °C. */
   readonly ambient: number;
   /** Volts at `node`, measured from ground. */
