@@ -1,0 +1,423 @@
+import { describe, expect, it } from 'vitest';
+import {
+  Battery,
+  Circuit,
+  GROUND,
+  NotWrittenYet,
+  Resistor,
+  TICK,
+  Wire,
+  type Part,
+  type Readings,
+  type Stamp,
+} from '../src/index';
+import { expectConserved, FixedCurrent, Source, TestDiode, THERMAL_VOLTS } from './fixtures';
+
+describe('Circuit, linear parts', () => {
+  it('splits voltage across a divider the way hand maths says', () => {
+    // 9 V across 1 kΩ then 2 kΩ: the middle sits at 9 × 2k / 3k = 6 V.
+    const c = new Circuit();
+    const top = c.node('top');
+    const mid = c.node('mid');
+    c.add(new Source('V1', top, GROUND, 9));
+    c.add(new Resistor('R1', top, mid, 1000));
+    c.add(new Resistor('R2', mid, GROUND, 2000));
+
+    expect(c.step(0).converged).toBe(true);
+    expect(c.voltage(top)).toBeCloseTo(9, 6);
+    expect(c.voltage(mid)).toBeCloseTo(6, 6);
+    expectConserved(c);
+  });
+
+  it('carries the same current through every part of a series loop', () => {
+    const c = new Circuit();
+    const top = c.node('top');
+    const mid = c.node('mid');
+    const source = c.add(new Source('V1', top, GROUND, 5));
+    const r1 = c.add(new Resistor('R1', top, mid, 220));
+    const r2 = c.add(new Resistor('R2', mid, GROUND, 330));
+    c.step(0);
+
+    const expected = 5 / 550;
+    expect(c.currentThrough(r1)).toBeCloseTo(expected, 9);
+    expect(c.currentThrough(r2)).toBeCloseTo(expected, 9);
+    expect(c.currentThrough(source)).toBeCloseTo(expected, 9);
+    expectConserved(c);
+  });
+
+  it('pushes a fixed current through a resistor', () => {
+    const c = new Circuit();
+    const top = c.node('top');
+    c.add(new FixedCurrent('I1', GROUND, top, 0.002));
+    c.add(new Resistor('R1', top, GROUND, 1000));
+    c.step(0);
+    expect(c.voltage(top)).toBeCloseTo(2, 6);
+    expectConserved(c);
+  });
+
+  it('shares current between parallel paths by conductance', () => {
+    // 6 V across 100 Ω and 300 Ω in parallel: 60 mA + 20 mA.
+    const c = new Circuit();
+    const top = c.node('top');
+    const source = c.add(new Source('V1', top, GROUND, 6));
+    const r1 = c.add(new Resistor('R1', top, GROUND, 100));
+    const r2 = c.add(new Resistor('R2', top, GROUND, 300));
+    c.step(0);
+    expect(c.currentThrough(r1)).toBeCloseTo(0.06, 9);
+    expect(c.currentThrough(r2)).toBeCloseTo(0.02, 9);
+    expect(c.currentThrough(source)).toBeCloseTo(0.08, 9);
+    expectConserved(c);
+  });
+
+  it('leaves a node connected to nothing at 0 V instead of failing', () => {
+    const c = new Circuit();
+    const top = c.node('top');
+    const floating = c.node('floating');
+    c.add(new Source('V1', top, GROUND, 5));
+    c.add(new Resistor('R1', top, GROUND, 100));
+
+    expect(c.step(0).converged).toBe(true);
+    expect(c.voltage(floating)).toBe(0);
+    expectConserved(c);
+  });
+
+  it('reads 0 V before the first solve', () => {
+    const c = new Circuit();
+    expect(c.voltage(c.node('a'))).toBe(0);
+  });
+});
+
+describe('Circuit, power', () => {
+  it('reports the heat in a resistor as I²R and the battery as the supplier', () => {
+    const c = new Circuit();
+    const plus = c.node('plus');
+    const battery = c.add(new Battery('B1', plus, GROUND, 9, 1.5));
+    const load = c.add(new Resistor('R1', plus, GROUND, 100));
+    c.step(0);
+
+    const amps = 9 / 101.5;
+    expect(c.powerOf(load)).toBeCloseTo(amps * amps * 100, 9);
+    // The battery delivers to the load, so its own net power is the load's, negative.
+    expect(c.powerOf(battery)).toBeCloseTo(-c.powerOf(load), 9);
+    expectConserved(c);
+  });
+});
+
+describe('Circuit, junctions', () => {
+  /** Solves (V - v) / R = Is·(e^(v/Vt) - 1) by bisection, independently of the engine. */
+  function diodeVolts(volts: number, ohms: number, saturationAmps: number): number {
+    let low = 0;
+    let high = volts;
+    for (let i = 0; i < 200; i++) {
+      const v = (low + high) / 2;
+      const mismatch = (volts - v) / ohms - saturationAmps * Math.expm1(v / THERMAL_VOLTS);
+      if (mismatch > 0) low = v;
+      else high = v;
+    }
+    return (low + high) / 2;
+  }
+
+  function diodeCircuit(volts: number, ohms: number) {
+    const c = new Circuit();
+    const top = c.node('top');
+    const anode = c.node('anode');
+    const source = c.add(new Source('V1', top, GROUND, volts));
+    c.add(new Resistor('R1', top, anode, ohms));
+    const diode = c.add(new TestDiode('D1', anode, GROUND));
+    return { c, anode, source, diode };
+  }
+
+  it('finds a diode operating point that matches an independent solution', () => {
+    const { c, anode } = diodeCircuit(5, 1000);
+    expect(c.step(0).converged).toBe(true);
+    expect(c.voltage(anode)).toBeCloseTo(diodeVolts(5, 1000, 1e-14), 8);
+    expectConserved(c);
+  });
+
+  it('settles from a cold start even when pushed hard', () => {
+    const { c, anode } = diodeCircuit(24, 10);
+    expect(c.step(0).converged).toBe(true);
+    expect(c.voltage(anode)).toBeCloseTo(diodeVolts(24, 10, 1e-14), 8);
+    expectConserved(c);
+  });
+
+  it('settles in a few guesses once warm', () => {
+    const { c } = diodeCircuit(5, 1000);
+    c.step(0);
+    expect(c.step(0).iterations).toBeLessThanOrEqual(3);
+  });
+
+  it('follows a change in the circuit', () => {
+    const { c, anode, source } = diodeCircuit(5, 1000);
+    c.step(0);
+    source.volts = 12;
+    expect(c.step(0).converged).toBe(true);
+    expect(c.voltage(anode)).toBeCloseTo(diodeVolts(12, 1000, 1e-14), 8);
+    expectConserved(c);
+  });
+
+  it('blocks current in reverse', () => {
+    const { c, diode } = diodeCircuit(-5, 1000);
+    c.step(0);
+    expect(Math.abs(c.currentThrough(diode) ?? Number.NaN)).toBeLessThan(1e-13);
+    expectConserved(c);
+  });
+
+  it('names the part when its curve returns nonsense', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    c.add(new Source('V1', a, GROUND, 1));
+    c.add({
+      name: 'BROKEN',
+      stamp: (s: Stamp) => {
+        s.junction(a, GROUND, { current: () => Number.NaN, slope: () => 1 });
+      },
+      current: () => 0,
+    } satisfies Part);
+    expect(() => c.step(0)).toThrow(/BROKEN\.stamp\(\) failed: current\(\) is NaN/);
+  });
+});
+
+describe('Circuit, parts hanging by leakage', () => {
+  it('settles a diode with half-built wiring hanging off it and no ground anywhere', () => {
+    // Mid-build: a battery, a diode on its minus, and from the diode's anode a resistor and wires
+    // leading nowhere. Nothing but the solver's leakage to ground sets where that dangling chain sits,
+    // so the diode carries picoamps, and its voltage can only be pinned down to a fraction of a millivolt.
+    const c = new Circuit();
+    const plus = c.node('plus');
+    const minus = c.node('minus');
+    const cathode = c.node('cathode');
+    const anode = c.node('anode');
+    const [a, b, end] = [c.node('a'), c.node('b'), c.node('end')];
+    c.add(new Battery('B1', plus, minus, 9.35, 1.75));
+    c.add(new Wire('W1', minus, cathode));
+    const diode = c.add(new TestDiode('D1', anode, cathode, 1e-13, 2.8));
+    c.add(new Wire('W2', anode, a));
+    c.add(new Resistor('R1', a, b, 330));
+    c.add(new Wire('W3', b, end));
+    for (let i = 0; i < 30; i++) {
+      expect(c.step(1 / 60).converged).toBe(true);
+    }
+    expect(Math.abs(c.currentThrough(diode) ?? Number.NaN)).toBeLessThan(1e-9);
+    expectConserved(c);
+  });
+});
+
+describe('Circuit, parts with bugs', () => {
+  function circuitWith(part: Part) {
+    const c = new Circuit();
+    c.add(part);
+    return c;
+  }
+
+  it('names the part and method when a part throws', () => {
+    const crash = (): never => {
+      throw new TypeError('x is undefined');
+    };
+    expect(() => circuitWith({ name: 'S1', stamp: crash, current: () => 0 }).step(0)).toThrow(
+      'S1.stamp() failed: x is undefined',
+    );
+    const broken: Part = { name: 'C1', stamp: () => undefined, current: crash };
+    expect(() => circuitWith(broken).currentThrough(broken)).toThrow('C1.current() failed: x is undefined');
+    expect(() =>
+      circuitWith({ name: 'T1', stamp: () => undefined, current: () => 0, settle: crash }).step(0.001),
+    ).toThrow('T1.settle() failed: x is undefined');
+  });
+
+  it('names a part that never settles', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    let flip = 1;
+    c.add(new Source('V1', a, GROUND, 1));
+    c.add({
+      name: 'JITTER',
+      stamp: (s: Stamp) => {
+        s.junction(a, GROUND, { current: () => (flip = -flip) * 1e-3, slope: () => 1 });
+      },
+      current: () => 0,
+    } satisfies Part);
+    const result = c.step(0.001);
+    expect(result.converged).toBe(false);
+    expect(result.unsettled).toEqual(['JITTER']);
+  });
+
+  it('keeps a part in the circuit when only settle() is unwritten', () => {
+    const c = new Circuit();
+    const top = c.node('top');
+    c.add(new Source('V1', top, GROUND, 10));
+    const half: Part = {
+      name: 'H1',
+      stamp: (s: Stamp) => {
+        s.conductance(top, GROUND, 0.01);
+      },
+      current: (r: Readings) => r.voltage(top) * 0.01,
+      settle: () => {
+        throw new NotWrittenYet('H1', 'h1.ts');
+      },
+    };
+    c.add(half);
+    c.step(0.01);
+    expect(c.currentThrough(half)).toBeCloseTo(0.1, 9);
+    expect(c.notWritten).toEqual([{ part: 'H1', method: 'settle', file: 'h1.ts' }]);
+    expectConserved(c);
+  });
+});
+
+describe('Circuit, internal nodes', () => {
+  it('gives each part its own private nodes, stable across solves', () => {
+    const c = new Circuit();
+    const plus = c.node('plus');
+    c.add(new Battery('B1', plus, GROUND, 9, 1));
+    c.add(new Battery('B2', plus, GROUND, 9, 1));
+    c.add(new Resistor('R1', plus, GROUND, 8));
+    c.step(0);
+    const first = c.voltage(plus);
+    c.step(0);
+    // Two 9 V cells, 1 Ω each, in parallel into 8 Ω: 9 × 8 / 8.5.
+    expect(first).toBeCloseTo((9 * 8) / 8.5, 9);
+    expect(c.voltage(plus)).toBe(first);
+    expectConserved(c);
+  });
+
+  it('hands a part’s private nodes to its replacement', () => {
+    const c = new Circuit();
+    const plus = c.node('plus');
+    const old = c.add(new Battery('B1', plus, GROUND, 9, 1));
+    c.add(new Resistor('R1', plus, GROUND, 8));
+    c.step(0);
+    c.replace(old, new Battery('B1', plus, GROUND, 6, 1));
+    c.step(0);
+    expect(c.voltage(plus)).toBeCloseTo((6 * 8) / 9, 9);
+    expectConserved(c);
+  });
+});
+
+describe('Circuit, parts not written yet', () => {
+  class Unwritten implements Part {
+    constructor(
+      readonly name: string,
+      readonly a: ReturnType<Circuit['node']>,
+    ) {}
+
+    stamp(s: Stamp): void {
+      // Stamps something first, so the rollback is tested too.
+      s.conductance(this.a, GROUND, 1);
+      throw new NotWrittenYet(this.name, 'somewhere.ts');
+    }
+
+    current(r: Readings): number {
+      throw new NotWrittenYet(this.name, 'somewhere.ts');
+    }
+  }
+
+  it('treats the part as absent and lists it', () => {
+    const c = new Circuit();
+    const top = c.node('top');
+    const mid = c.node('mid');
+    c.add(new Source('V1', top, GROUND, 9));
+    const r1 = c.add(new Resistor('R1', top, mid, 1000));
+    const missing = c.add(new Unwritten('X1', mid));
+
+    expect(c.step(0).converged).toBe(true);
+    expect(c.currentThrough(r1)).toBeCloseTo(0, 9);
+    expect(c.currentThrough(missing)).toBeUndefined();
+    expect(c.notWritten.map((e) => e.part)).toEqual(['X1']);
+    expectConserved(c);
+  });
+});
+
+describe('Circuit, time', () => {
+  function clock() {
+    const seen: number[] = [];
+    const part: Part = {
+      name: 'CLOCK',
+      stamp: () => undefined,
+      current: () => 0,
+      settle: (_r: Readings, dt: number) => {
+        seen.push(dt);
+      },
+    };
+    return { part, seen };
+  }
+
+  it('advances in whole ticks and carries the remainder', () => {
+    const c = new Circuit();
+    const { part, seen } = clock();
+    c.add(part);
+    c.step(0.0025);
+    expect(seen).toEqual([TICK, TICK]);
+    c.step(0.0005);
+    expect(seen).toHaveLength(3);
+    expect(c.time).toBeCloseTo(0.003, 12);
+  });
+
+  it('solves without moving time on step(0)', () => {
+    const c = new Circuit();
+    const { part, seen } = clock();
+    c.add(part);
+    c.step(0);
+    expect(seen).toHaveLength(0);
+    expect(c.time).toBe(0);
+  });
+
+  it('gives the same answer whatever the frame rate', () => {
+    function heatFor(frameSeconds: number): number {
+      const c = new Circuit();
+      const top = c.node('top');
+      c.add(new Source('V1', top, GROUND, 9));
+      const r = c.add(new Resistor('R1', top, GROUND, 100)); // 0.81 W: hot
+      const frames = Math.round(5 / frameSeconds);
+      for (let i = 0; i < frames; i++) c.step(frameSeconds);
+      expect(c.time).toBeCloseTo(5, 9);
+      return r.temperature;
+    }
+    const at30 = heatFor(1 / 30);
+    expect(heatFor(1 / 144)).toBeCloseTo(at30, 9);
+    expect(heatFor(1 / 60)).toBeCloseTo(at30, 9);
+    expect(heatFor(5)).toBeCloseTo(at30, 9);
+  });
+
+  it("doesn't let parts react to a solve that didn't settle", () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    let flip = 1;
+    const { part: watcher, seen } = clock();
+    c.add(new Source('V1', a, GROUND, 1));
+    // A curve that never gives the same answer twice can never settle.
+    c.add({
+      name: 'JITTER',
+      stamp: (s: Stamp) => {
+        s.junction(a, GROUND, {
+          current: () => (flip = -flip) * 1e-3,
+          slope: () => 1,
+        });
+      },
+      current: () => 0,
+    } satisfies Part);
+    c.add(watcher);
+
+    expect(c.step(0.01).converged).toBe(false);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('lets parts react to each tick', () => {
+    const c = new Circuit();
+    const { part, seen } = clock();
+    c.add(part);
+    c.step(0.01);
+    expect(seen).toHaveLength(10);
+    expect(c.time).toBeCloseTo(0.01, 12);
+  });
+
+  it('swaps a part in place', () => {
+    const c = new Circuit();
+    const top = c.node('top');
+    c.add(new Source('V1', top, GROUND, 10));
+    const old = c.add(new Resistor('R1', top, GROUND, 1000));
+    const fresh = new Resistor('R1', top, GROUND, 500);
+    c.replace(old, fresh);
+    c.step(0);
+    expect(c.currentThrough(fresh)).toBeCloseTo(0.02, 9);
+    expectConserved(c);
+  });
+});

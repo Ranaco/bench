@@ -1,0 +1,581 @@
+import { solveInPlace } from './linear';
+import {
+  AMBIENT_CELSIUS,
+  GROUND,
+  NotWrittenYet,
+  PartFailed,
+  type Branch,
+  type Curve,
+  type Method,
+  type Node,
+  type Part,
+  type Readings,
+  type Stamp,
+  type Unwritten,
+} from './types';
+
+/** The engine's heartbeat, in seconds. Time always advances in whole ticks. */
+export const TICK = 0.001;
+
+/** A whisper of conductance from every node to ground, so no node floats. */
+const GMIN = 1e-12;
+/** Newton guesses allowed per solve before giving up. */
+const MAX_ITERATIONS = 200;
+/** A junction has settled when its voltage moves less than this between guesses… */
+const VOLT_TOLERANCE = 1e-9;
+/** …and its current agrees with the straight-line estimate to within this. */
+const AMP_TOLERANCE = 1e-12;
+const RELATIVE_TOLERANCE = 1e-6;
+/** Forward junction voltages may jump straight to this… */
+const JUNCTION_KNEE = 0.5;
+/** …and after that climb at most this much per guess, so exponentials can't overflow. */
+const JUNCTION_STEP = 0.1;
+
+export interface StepResult {
+  /** True when every solve found a consistent answer. */
+  readonly converged: boolean;
+  /** Most guesses any one solve needed. */
+  readonly iterations: number;
+  /** Parts whose junctions were still moving when the solver gave up. */
+  readonly unsettled: readonly string[];
+}
+
+/** How well the last solve obeys the laws it's built on. Both should be ~0. */
+export interface Audit {
+  /** Worst mismatch between current in and current out at any node, A. */
+  readonly worstNodeAmps: number;
+  /** Power delivered minus power absorbed across the whole circuit, W. */
+  readonly powerImbalance: number;
+  /** Total power delivered by sources, W, for scale. */
+  readonly powerDelivered: number;
+}
+
+interface Conductance {
+  readonly a: Node;
+  readonly b: Node;
+  readonly siemens: number;
+  readonly owner: Part;
+}
+
+interface CurrentSource {
+  readonly from: Node;
+  readonly to: Node;
+  readonly amps: number;
+  readonly owner: Part;
+}
+
+interface VoltageSource {
+  readonly plus: Node;
+  readonly minus: Node;
+  readonly volts: number;
+  readonly owner: Part;
+}
+
+interface Junction {
+  readonly a: Node;
+  readonly b: Node;
+  readonly curve: Curve;
+  /** The guessed voltage this solve linearised around. */
+  readonly volts: number;
+  readonly amps: number;
+  readonly slope: number;
+  readonly owner: Part;
+  readonly index: number;
+}
+
+/** A solved linear system, with the stamps that produced it. */
+interface Solved {
+  readonly assembly: Assembly;
+  readonly solution: Float64Array;
+  readonly nodeCount: number;
+}
+
+/**
+ * A circuit: nodes, the parts between them, and the solver that works out
+ * every voltage and current. Call `step` with the seconds that have passed.
+ */
+export class Circuit {
+  readonly ground = GROUND;
+  /** Seconds simulated so far. Always a whole number of ticks. */
+  time = 0;
+  /** Temperature of the air around the circuit, °C. */
+  ambient = AMBIENT_CELSIUS;
+  /** How the last step went. */
+  lastStep: StepResult = { converged: true, iterations: 0, unsettled: [] };
+
+  private readonly nodeNames: string[] = ['ground'];
+  private readonly parts: Part[] = [];
+  private readonly missing = new Map<Part, Map<Method, NotWrittenYet>>();
+  private readonly junctionVolts = new Map<Part, number[]>();
+  private readonly internals = new Map<Part, Map<string, Node>>();
+  private last: Solved | undefined;
+  private ticks = 0;
+  private pending = 0;
+  /** Nodes given back by `release`, reused before new ones are made. */
+  private readonly spare: Node[] = [];
+
+  /**
+   * Adds a node and returns it. A node keeps its number for as long as it's in
+   * use; numbers given back with `release` are reused.
+   */
+  node(name: string): Node {
+    const reused = this.spare.pop();
+    if (reused !== undefined) {
+      this.nodeNames[reused] = name;
+      return reused;
+    }
+    this.nodeNames.push(name);
+    return (this.nodeNames.length - 1) as Node;
+  }
+
+  /** Gives a node back once no part uses it, so the next `node()` can reuse it. */
+  release(node: Node): void {
+    if (node === GROUND || this.spare.includes(node)) return;
+    this.nodeNames[node] = 'spare';
+    this.spare.push(node);
+  }
+
+  /** Adds a part and returns it. */
+  add<P extends Part>(part: P): P {
+    this.parts.push(part);
+    return part;
+  }
+
+  /**
+   * Takes a part out of the circuit. Every other part keeps its state: a hot
+   * resistor stays hot, a burnt LED stays burnt. The part's private nodes are
+   * released; release the nodes it was wired to yourself, once nothing else uses them.
+   */
+  remove(part: Part): void {
+    const index = this.parts.indexOf(part);
+    if (index === -1) return;
+    this.parts.splice(index, 1);
+    this.missing.delete(part);
+    this.junctionVolts.delete(part);
+    const internal = this.internals.get(part);
+    if (internal) {
+      for (const node of internal.values()) this.release(node);
+      this.internals.delete(part);
+    }
+  }
+
+  /** Swaps one part for another in the same place, like replacing a burnt LED. */
+  replace(old: Part, next: Part): void {
+    const index = this.parts.indexOf(old);
+    if (index === -1) throw new Error(`${old.name} isn't in this circuit`);
+    this.parts[index] = next;
+    this.missing.delete(old);
+    this.junctionVolts.delete(old);
+    const internal = this.internals.get(old);
+    if (internal) {
+      this.internals.delete(old);
+      this.internals.set(next, internal);
+    }
+  }
+
+  /**
+   * Advances `dt` seconds in whole ticks, solving the circuit and letting the
+   * parts react after each one. Leftover time carries into the next call, so
+   * results don't depend on how time is chopped up. `step(0)` just solves.
+   */
+  step(dt: number): StepResult {
+    this.pending += Math.max(dt, 0);
+    const due = Math.floor(this.pending / TICK + 1e-9);
+    if (due === 0) {
+      this.lastStep = this.solve();
+      return this.lastStep;
+    }
+
+    let converged = true;
+    let iterations = 0;
+    const unsettled = new Set<string>();
+    for (let i = 0; i < due; i++) {
+      const result = this.solve();
+      iterations = Math.max(iterations, result.iterations);
+      if (result.converged) this.settleParts();
+      else {
+        converged = false;
+        for (const name of result.unsettled) unsettled.add(name);
+      }
+      this.ticks++;
+      this.time = this.ticks * TICK;
+    }
+    this.pending = Math.max(0, this.pending - due * TICK);
+    this.lastStep = { converged, iterations, unsettled: [...unsettled] };
+    return this.lastStep;
+  }
+
+  /** Volts at `node`, measured from ground. */
+  voltage(node: Node): number {
+    if (node === GROUND || !this.last) return 0;
+    return valueAt(this.last.solution, node - 1);
+  }
+
+  /** Volts at `a` minus volts at `b`. */
+  across(a: Node, b: Node): number {
+    return this.voltage(a) - this.voltage(b);
+  }
+
+  /** Amps through `part`, or undefined when its current() isn't written yet. */
+  currentThrough(part: Part): number | undefined {
+    if (this.lacks(part, 'current') || this.lacks(part, 'stamp')) return undefined;
+    return this.call(part, 'current', () => part.current(this.readings()));
+  }
+
+  /** Watts `part` is turning into heat (or light), or negative when it's supplying power. */
+  powerOf(part: Part): number {
+    if (!this.last) return 0;
+    let watts = 0;
+    for (const flow of this.flows(this.last)) if (flow.owner === part) watts += flow.watts;
+    return watts;
+  }
+
+  /** Checks the last solve against Kirchhoff's current law and conservation of energy. */
+  audit(): Audit {
+    const last = this.last;
+    if (!last) return { worstNodeAmps: 0, powerImbalance: 0, powerDelivered: 0 };
+
+    const leaving = new Float64Array(last.nodeCount + 1);
+    let balance = 0;
+    let delivered = 0;
+    for (const flow of this.flows(last)) {
+      leaving[flow.a] += flow.amps;
+      leaving[flow.b] -= flow.amps;
+      balance += flow.watts;
+      if (flow.watts < 0) delivered -= flow.watts;
+    }
+    let worst = 0;
+    for (let node = 1; node <= last.nodeCount; node++) worst = Math.max(worst, Math.abs(leaving[node]));
+    return { worstNodeAmps: worst, powerImbalance: Math.abs(balance), powerDelivered: delivered };
+  }
+
+  /**
+   * Part methods that aren't written yet. A part without stamp() is left out
+   * of the circuit; one without settle() conducts but never heats up.
+   */
+  get notWritten(): readonly Unwritten[] {
+    const list: Unwritten[] = [];
+    for (const methods of this.missing.values()) {
+      for (const [method, error] of methods) list.push({ part: error.part, method, file: error.file });
+    }
+    return list;
+  }
+
+  private readings(): Readings {
+    const last = this.last;
+    return {
+      time: this.time,
+      ambient: this.ambient,
+      voltage: (node) => this.voltage(node),
+      across: (a, b) => this.across(a, b),
+      branchCurrent: (branch) => (last ? -valueAt(last.solution, last.nodeCount + branch) : 0),
+    };
+  }
+
+  private settleParts(): void {
+    const readings = this.readings();
+    for (const part of this.parts) {
+      if (this.lacks(part, 'stamp') || this.lacks(part, 'settle')) continue;
+      this.call(part, 'settle', () => part.settle?.(readings, TICK));
+    }
+  }
+
+  private lacks(part: Part, method: Method): boolean {
+    return this.missing.get(part)?.has(method) ?? false;
+  }
+
+  /**
+   * Runs one of a part's methods. A method that isn't written yet is noted and
+   * skipped from then on; any other failure is raised again, naming the part.
+   */
+  private call<T>(part: Part, method: Method, run: () => T): T | undefined {
+    try {
+      return run();
+    } catch (error) {
+      if (error instanceof NotWrittenYet) {
+        let methods = this.missing.get(part);
+        if (!methods) {
+          methods = new Map();
+          this.missing.set(part, methods);
+        }
+        methods.set(method, error);
+        if (method === 'stamp') this.junctionVolts.delete(part);
+        return undefined;
+      }
+      if (error instanceof PartFailed) throw error;
+      throw new PartFailed(part.name, method, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
+   * Newton's method: linearise every junction at a guessed voltage, solve the
+   * resulting linear circuit, move the guesses toward the answer, and repeat
+   * until both voltages and currents stop changing.
+   */
+  private solve(): StepResult {
+    const unsettled = new Set<string>();
+    for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+      const assembly = this.assemble();
+      const nodeCount = this.nodeNames.length - 1;
+      const solution = assembly.solve(nodeCount);
+      this.last = { assembly, solution, nodeCount };
+
+      unsettled.clear();
+      for (const junction of assembly.junctions) {
+        const reached = voltageIn(solution, junction.a) - voltageIn(solution, junction.b);
+        const next = limitJunction(reached, junction.volts);
+        if (next !== reached || !junctionSettled(junction, reached)) unsettled.add(junction.owner.name);
+        this.guessesFor(junction.owner)[junction.index] = next;
+      }
+      if (unsettled.size === 0) return { converged: true, iterations: iteration, unsettled: [] };
+    }
+    return { converged: false, iterations: MAX_ITERATIONS, unsettled: [...unsettled] };
+  }
+
+  private assemble(): Assembly {
+    const assembly = new Assembly(
+      this.time,
+      this.ambient,
+      () => this.nodeNames.length - 1,
+      (owner, name) => this.internalNode(owner, name),
+      (owner, index) => valueAt(this.guessesFor(owner), index),
+    );
+    for (const part of this.parts) {
+      if (this.lacks(part, 'stamp')) continue;
+      const mark = assembly.mark(part);
+      try {
+        this.call(part, 'stamp', () => {
+          part.stamp(assembly);
+        });
+      } finally {
+        if (this.lacks(part, 'stamp')) assembly.rollback(mark);
+      }
+    }
+    return assembly;
+  }
+
+  private internalNode(owner: Part, name: string): Node {
+    let nodes = this.internals.get(owner);
+    if (!nodes) {
+      nodes = new Map();
+      this.internals.set(owner, nodes);
+    }
+    let node = nodes.get(name);
+    if (node === undefined) {
+      node = this.node(`${owner.name}.${name}`);
+      nodes.set(name, node);
+    }
+    return node;
+  }
+
+  private guessesFor(part: Part): number[] {
+    let guesses = this.junctionVolts.get(part);
+    if (!guesses) {
+      guesses = [];
+      this.junctionVolts.set(part, guesses);
+    }
+    return guesses;
+  }
+
+  /**
+   * Every current in the last solve, as (from node a, to node b, amps, watts
+   * absorbed). Junctions use their true curve, not the straight-line estimate,
+   * so this measures the physics rather than the arithmetic.
+   */
+  private *flows(last: Solved): Generator<{ a: Node; b: Node; amps: number; watts: number; owner?: Part }> {
+    const { assembly, solution, nodeCount } = last;
+    const v = (node: Node) => voltageIn(solution, node);
+    for (let node = 1; node <= nodeCount; node++) {
+      const volts = v(node as Node);
+      yield { a: node as Node, b: GROUND, amps: GMIN * volts, watts: GMIN * volts * volts };
+    }
+    for (const c of assembly.conductances) {
+      const volts = v(c.a) - v(c.b);
+      yield { a: c.a, b: c.b, amps: c.siemens * volts, watts: c.siemens * volts * volts, owner: c.owner };
+    }
+    for (const s of assembly.sources) {
+      yield { a: s.from, b: s.to, amps: s.amps, watts: s.amps * (v(s.from) - v(s.to)), owner: s.owner };
+    }
+    for (const [k, s] of assembly.voltageSources.entries()) {
+      const amps = valueAt(solution, nodeCount + k);
+      yield { a: s.plus, b: s.minus, amps, watts: amps * (v(s.plus) - v(s.minus)), owner: s.owner };
+    }
+    for (const j of assembly.junctions) {
+      const volts = v(j.a) - v(j.b);
+      const amps = j.curve.current(volts);
+      yield { a: j.a, b: j.b, amps, watts: amps * volts, owner: j.owner };
+    }
+  }
+}
+
+/** `values[index]`, or 0 before anything has been stored there. */
+function valueAt(values: ArrayLike<number>, index: number): number {
+  return index < values.length ? values[index] : 0;
+}
+
+function voltageIn(solution: Float64Array, node: Node): number {
+  return node === GROUND ? 0 : valueAt(solution, node - 1);
+}
+
+/** Stops a forward-biased junction leaping so far that its exponential overflows. */
+function limitJunction(reached: number, previous: number): number {
+  if (reached <= JUNCTION_KNEE || reached <= previous + JUNCTION_STEP) return reached;
+  return Math.max(previous + JUNCTION_STEP, JUNCTION_KNEE);
+}
+
+/** True when the guess barely moved and the curve agrees with its straight-line estimate. */
+function junctionSettled(j: Junction, reached: number): boolean {
+  const actual = j.curve.current(reached);
+  const step = Math.abs(reached - j.volts);
+  // Still, in volts; or moving so little that its current changes by less than the solver resolves. A diode
+  // carrying picoamps (hanging off a circuit by nothing but leakage) can wobble by a fraction of a millivolt
+  // from guess to guess without its current, or anything else, changing in any digit that counts.
+  const steepest = Math.max(j.slope, j.curve.slope(reached));
+  const still =
+    step <= VOLT_TOLERANCE + RELATIVE_TOLERANCE * Math.abs(reached) ||
+    step * steepest <= AMP_TOLERANCE + RELATIVE_TOLERANCE * Math.abs(actual);
+  if (!still) return false;
+  const estimate = j.amps + j.slope * (reached - j.volts);
+  return Math.abs(actual - estimate) <= AMP_TOLERANCE + RELATIVE_TOLERANCE * Math.max(Math.abs(actual), Math.abs(estimate));
+}
+
+interface Mark {
+  readonly conductances: number;
+  readonly sources: number;
+  readonly voltageSources: number;
+  readonly junctions: number;
+}
+
+/** Collects every part's stamps for one guess, then builds and solves the equations. */
+class Assembly implements Stamp {
+  readonly conductances: Conductance[] = [];
+  readonly sources: CurrentSource[] = [];
+  readonly voltageSources: VoltageSource[] = [];
+  readonly junctions: Junction[] = [];
+  private owner: Part | undefined;
+  private ownerJunctions = 0;
+
+  constructor(
+    readonly time: number,
+    readonly ambient: number,
+    private readonly nodeCount: () => number,
+    private readonly allocate: (owner: Part, name: string) => Node,
+    private readonly guess: (owner: Part, index: number) => number,
+  ) {}
+
+  mark(owner: Part): Mark {
+    this.owner = owner;
+    this.ownerJunctions = 0;
+    return {
+      conductances: this.conductances.length,
+      sources: this.sources.length,
+      voltageSources: this.voltageSources.length,
+      junctions: this.junctions.length,
+    };
+  }
+
+  rollback(mark: Mark): void {
+    this.conductances.length = mark.conductances;
+    this.sources.length = mark.sources;
+    this.voltageSources.length = mark.voltageSources;
+    this.junctions.length = mark.junctions;
+  }
+
+  internal(name: string): Node {
+    return this.allocate(this.currentOwner(), name);
+  }
+
+  conductance(a: Node, b: Node, siemens: number): void {
+    this.checkNodes(a, b);
+    this.checkFinite('conductance', siemens, 'is a resistance set to 0 Ω?');
+    this.conductances.push({ a, b, siemens, owner: this.currentOwner() });
+  }
+
+  currentSource(from: Node, to: Node, amps: number): void {
+    this.checkNodes(from, to);
+    this.checkFinite('current', amps);
+    this.sources.push({ from, to, amps, owner: this.currentOwner() });
+  }
+
+  voltageSource(plus: Node, minus: Node, volts: number): Branch {
+    this.checkNodes(plus, minus);
+    this.checkFinite('voltage', volts);
+    this.voltageSources.push({ plus, minus, volts, owner: this.currentOwner() });
+    return (this.voltageSources.length - 1) as Branch;
+  }
+
+  junction(anode: Node, cathode: Node, curve: Curve): void {
+    this.checkNodes(anode, cathode);
+    const owner = this.currentOwner();
+    const index = this.ownerJunctions++;
+    const volts = this.guess(owner, index);
+    const amps = curve.current(volts);
+    const slope = curve.slope(volts);
+    this.checkFinite('current()', amps, `at ${String(volts)} V`);
+    this.checkFinite('slope()', slope, `at ${String(volts)} V`);
+    this.junctions.push({ a: anode, b: cathode, curve, volts, amps, slope: Math.max(slope, GMIN), owner, index });
+  }
+
+  /** Modified nodal analysis: one equation per node, plus one per voltage source. */
+  solve(nodes: number): Float64Array {
+    const size = nodes + this.voltageSources.length;
+    const matrix = new Float64Array(size * size);
+    const rhs = new Float64Array(size);
+
+    const addConductance = (a: Node, b: Node, g: number): void => {
+      if (a !== GROUND) matrix[(a - 1) * size + (a - 1)] += g;
+      if (b !== GROUND) matrix[(b - 1) * size + (b - 1)] += g;
+      if (a !== GROUND && b !== GROUND) {
+        matrix[(a - 1) * size + (b - 1)] -= g;
+        matrix[(b - 1) * size + (a - 1)] -= g;
+      }
+    };
+    const addCurrent = (from: Node, to: Node, amps: number): void => {
+      if (from !== GROUND) rhs[from - 1] -= amps;
+      if (to !== GROUND) rhs[to - 1] += amps;
+    };
+
+    for (let i = 0; i < nodes; i++) matrix[i * size + i] += GMIN;
+    for (const c of this.conductances) addConductance(c.a, c.b, c.siemens);
+    for (const s of this.sources) addCurrent(s.from, s.to, s.amps);
+    for (const j of this.junctions) {
+      // Near its guess the curve is a straight line: a conductance plus a fixed current.
+      addConductance(j.a, j.b, j.slope);
+      addCurrent(j.a, j.b, j.amps - j.slope * j.volts);
+    }
+    for (const [k, s] of this.voltageSources.entries()) {
+      const row = nodes + k;
+      if (s.plus !== GROUND) {
+        matrix[(s.plus - 1) * size + row] += 1;
+        matrix[row * size + (s.plus - 1)] += 1;
+      }
+      if (s.minus !== GROUND) {
+        matrix[(s.minus - 1) * size + row] -= 1;
+        matrix[row * size + (s.minus - 1)] -= 1;
+      }
+      rhs[row] = s.volts;
+    }
+
+    return solveInPlace(matrix, rhs, size);
+  }
+
+  private currentOwner(): Part {
+    if (!this.owner) throw new Error('A stamp was made outside a part');
+    return this.owner;
+  }
+
+  private checkNodes(...nodes: Node[]): void {
+    const count = this.nodeCount();
+    for (const node of nodes) {
+      if (!Number.isInteger(node) || node < 0 || node > count) {
+        throw new PartFailed(this.currentOwner().name, 'stamp', `node ${String(node)} isn't in this circuit`);
+      }
+    }
+  }
+
+  private checkFinite(what: string, value: number, hint = ''): void {
+    if (Number.isFinite(value)) return;
+    const suffix = hint ? ` (${hint})` : '';
+    throw new PartFailed(this.currentOwner().name, 'stamp', `${what} is ${String(value)}${suffix}`);
+  }
+}

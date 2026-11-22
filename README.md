@@ -1,0 +1,213 @@
+# Bench
+
+A circuit and robotics bench you build as you learn. Every lesson starts from an empty board: you place the
+parts, wire them and make them work. Each lesson adds the engine features it needs, and you write the part
+models yourself: the engine, screen and tests tell you when they're right.
+
+![The workspace, Lesson 1 done](docs/screens/workspace.png)
+
+## Run it
+
+```sh
+pnpm install
+pnpm dev          # http://localhost:5180
+pnpm test:watch   # engine tests, re-run on save
+pnpm check        # types, lint and every test
+```
+
+## The menu
+
+![The main menu](docs/screens/home.png)
+
+Bench opens on a main menu: **Continue** (or Start) picks up the lesson you're on, **Lessons** lists them all
+with your progress (and the ones still to come, locked), and **Build** opens a free board. Arrow keys and Enter
+work as in a game; Esc on the lesson list goes back. In the workspace, the trail at the top left
+(Bench / Lessons / Light an LED) goes back up.
+
+- **Lessons**: a goal and a list of steps, checked against the live circuit as you build. A step passes because
+  the physics says so (the LED really carries 10–30 mA), not because parts sit in the right places. Progress
+  and the board are saved per lesson; *Start this lesson over* clears both.
+- **Build**: a free board with every part so far, and no goals.
+
+Each lesson and Build has its own board and undo history; Lessons and Build each keep their own arrangement of
+windows. Where you are lives in the address (`#/build`, `#/lessons/light-an-led`), so a reload, including the
+one after saving a part model, comes back to the same place.
+
+## The workspace
+
+Everything is a window: **Board**, **Parts**, **Meter**, **Inspector**, **Graph** (a tab beside the Inspector),
+and in Lessons, **Lesson**.
+
+- Drag a tab to move a window: into another window's tab bar, or to any edge to split. Drag the gaps between
+  windows to resize them.
+- The two buttons at the right of each tab bar float the window over the others (or dock it back where it
+  belongs), and maximise it.
+- **Windows** in the header opens and closes windows, and *Reset layout* puts everything back. The arrangement
+  is saved as you change it.
+- Below 900 px wide (phones), the windows stack in one scrolling column instead.
+
+Pop-out windows (a window in its own browser window, for a second screen) are not on yet.
+
+## On the board
+
+- Drag a part from **Parts** onto the board, or click it to drop one in the middle of the view.
+- Drag from one pin to another to wire them, or click one pin and then the other. Hollow pins have nothing
+  attached: parts connect only through wires, never by touching.
+- **Tap into a wire anywhere**: drop a wire end on the middle of another wire, or press on a wire and drag a new
+  one out of it. A dot (a junction) appears where they join. Delete the tap, or the dot, and the wire heals back
+  into one.
+- Click a part or a wire for what it's doing right now, and to change its value.
+- **On a phone or tablet**: one finger on empty board pans, two fingers pinch to zoom (and pan), a finger on a
+  part moves it, and a finger from pin to pin draws a wire. Tap a part tile to add it in the middle of the view.
+  A second finger landing while the first moves a part turns it into a pinch instead. The page scrolls from
+  anywhere but the board.
+- **Switches and buttons**: click a slide switch's lever to slide it to its other side (saved, and undoable). Press
+  and hold a push button's cap to hold it down; it springs back up when you let go. Two fingers hold two buttons
+  on a touchscreen; with a mouse, right-click a button and choose *Hold down* (or use the Inspector) to keep one
+  down while you press another.
+- **Knobs**: drag a knob's dial up or right to turn it towards pin 3, down or left towards pin 1 (one drag is one
+  undo step), or use the slider in the Inspector. The wiper's arrow slides along the track as it turns, and the
+  Inspector shows both legs: their resistance, the volts across each, and the current out of the wiper.
+- **Select several**: Shift- or Ctrl-click to add or remove, or drag a box on empty board. Drag any selected
+  part to move them all. <kbd>Ctrl</kbd> <kbd>A</kbd> selects everything; a click on empty board clears.
+- **Right-click** a part, a wire or the selection for what you can do with it: rotate, duplicate, copy, replace a
+  burnt part, delete. Right-click empty board to add a part right there, paste, select all, or fit the view.
+- <kbd>R</kbd> rotates, <kbd>⌫</kbd> deletes, the arrow keys nudge, <kbd>Ctrl</kbd> <kbd>D</kbd> duplicates,
+  <kbd>Ctrl</kbd> <kbd>C</kbd> / <kbd>V</kbd> copy and paste (a copy keeps the wires between its parts), all on
+  the whole selection. <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes, <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> redoes;
+  each of these is one undo step.
+- **Move the view** with a right-drag, Space+drag or the middle button. The wheel zooms around the pointer. 100%
+  is actual size; the zoom button frames the parts. Resizing the window keeps the scale and just shows more or
+  less. (To make a plain drag on empty board pan instead of selecting, set `EMPTY_DRAG` in `BoardCanvas.tsx`.)
+- Add a ground to read pin voltages (hover a pin). Without one the circuit floats: every current is still right,
+  but a voltage only means something measured from somewhere.
+- **Graph** plots the selected LED (or the first one): your model's curve, the datasheet's points, and where it
+  is right now.
+- **Spec sheet** (a tab beside the Meter, or *Spec sheet* in the Inspector) shows the selected part's datasheet:
+  maker and part number, the document the numbers come from, and every number Bench simulates it with, each
+  labelled with where it comes from (datasheet, standard, fitted to a datasheet graph, worked out, typical for the
+  type, or an estimate). Read-only: the numbers are the real parts', read from the engine's own constants.
+- **3D view** (a tab beside the Board, or *See it in 3D* in the Inspector) shows the knob as the real part, to
+  scale: drag its shaft to turn it (linked to the knob selected on the board, so it's the same turn and the same
+  undo), drag anywhere else to look round it, and scroll or pinch to zoom. *Take it apart* lifts every piece clear;
+  click a piece, or pick it from the list, to see what it does and where its shape comes from, and hide it to see
+  behind it. The carbon track is tinted in its two pieces, pin 1 to the wiper and the wiper to pin 3, with their
+  resistances from `legs()`. So far only the knob has a model.
+
+Every wire is a real 10 cm jumper with its own resistance and its own current, so a hand-built loop reads a hair
+under the same loop with perfect connections: about 1 µA less at 330 Ω, which is what three jumpers' 16 mΩ
+should cost (a test checks it). Parts keep their state while you edit: a burnt LED stays burnt when you add a
+wire, until you Replace it. Picking a new value swaps in a fresh part from the kit, and undoing a delete brings
+back a fresh part too: undo edits the board, not time. Reloading the page or switching modes also starts every
+part fresh and cool.
+
+Short a battery with a wire and it shows the real current (5.3 A from the 9 V), but nothing heats up yet:
+batteries and wires don't model their own heat, and batteries don't run down.
+
+A junction is an ideal point: no resistance of its own. Tapping a wire cuts it into two pieces that share its
+length (and so its resistance) in proportion to where the dot sits along the drawn wire, so an untouched tap
+changes nothing (a test checks it to 9 digits). A tap never sits on a bend or a wire's end: a drop there slides
+onto the straight run, and one right on a pin lands on the pin. Click either half of a cut wire and the
+Inspector shows its own length and resistance.
+
+## The meter
+
+One multimeter, two modes (<kbd>V</kbd> and <kbd>A</kbd>):
+
+- **Volts** is the voltmeter. Drag the red and black leads from their sockets at the board's bottom-left onto
+  any two pins, or anywhere along a wire. It reads red minus black, so swapping them flips the sign, and it
+  needs no ground: a voltage is always between two points. Partway along a wire it reads in proportion between
+  the wire's ends, since a uniform wire loses its voltage evenly along its length.
+- **Amps** is a clamp meter: close the jaws round a wire and it reads the current along it without breaking the
+  circuit. (A plain multimeter has to be wired into the loop to read current; that's a part for later.)
+
+The reading shows in the **Meter** window and beside the sockets. With *Guess before measuring* on, each new
+reading waits for your guess first. A lead on a wire that's tapped stays put on its half; one on a wire that's
+deleted goes back to its socket. *Put the leads away* sends them all home.
+
+## Writing a part model
+
+Each lesson has its own folder holding the part you write in it. The parts Bench gives you are in `parts/`.
+
+```
+packages/engine/src/
+  lesson-1-light-an-led/led.ts    your LED
+  lesson-2-switches/switch.ts     your switch: one pair of contacts, closed or open; the push button is one,
+                                  and the slide switch is two of them
+  lesson-3-knob/potentiometer.ts  your knob: two resistors sharing a wiper (legs() is written for you)
+  parts/                          built in: battery, resistor, wire, ground, junction, supply, slide switch
+```
+
+The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder the same way.
+
+1. The comment at the top of the part's file explains what it does and what to write. `parts/resistor.ts` and
+   `parts/battery.ts` are worked examples.
+2. Run `pnpm test:watch`. A part's tests show as "todo" until you start, then check your model against its
+   datasheet.
+3. Keep `pnpm dev` open. Every save reloads the page with your part in the circuit, in whichever mode you're in.
+
+## How the engine works
+
+`packages/engine` is plain TypeScript with no DOM, so the screen, tests and future builds all drive the same code.
+
+- **Solver.** Modified nodal analysis: one equation per node, plus one per voltage source, solved by Gaussian
+  elimination with pivoting. Nonlinear parts (diodes, LEDs) are handled by Newton's method, with junction-voltage
+  limiting so exponentials can't overflow, and a convergence test on both voltage and current. A junction
+  carrying only picoamps of leakage (an LED on a half-wired board) counts as settled once its voltage stops
+  changing its current by more than the solver resolves, 1 pA: its voltage can't be pinned to the nanovolt there.
+- **Time.** `step(dt)` advances in fixed 1 ms ticks and carries the remainder, so results don't depend on frame
+  rate. Parts only react (`settle`) after a solve that converged.
+- **Parts.** A part describes itself with conductances, current and voltage sources, junctions and private internal
+  nodes. `ThermalMass` turns power into temperature exactly, so heat and burn-out follow real thermal resistance.
+- **Checks.** `circuit.audit()` measures Kirchhoff's current law at every node and the power balance of the whole
+  circuit. Every test circuit asserts both.
+
+### Where the numbers come from
+
+| Part | Source |
+| --- | --- |
+| Red LED | Kingbright WP7113ID datasheet (V.14A, January 2026): VF 1.9 V at 10 mA, 30 mA DC, Rth JA 560 °C/W, Tj 125 °C. Ideality 2.8 and series resistance 6.6 Ω are fitted to its I–V graph (about 15 mV RMS error). |
+| ¼ W resistor | Typical carbon film rating: 0.25 W up to 70 °C, derated to zero at 155 °C, so 340 K/W. Not checked against one specific datasheet. |
+| 9 V battery | Energizer 522 engineering data (EBC-1108E): internal resistance 1.75 Ω fresh (its chart rises to about 12 Ω when flat); 9.35 V from its fresh 9.3 V under light loads. |
+| AA cells | Energizer E91 datasheet (EBC-1102Q): "150 to 300 milliohms (fresh)", the middle used; 1.5 V from its test curves. |
+| Wires | Worked out, not guessed: resistance = copper's resistivity (IEC 60028: 1.7241 × 10⁻⁸ Ω·m at 20 °C, +0.393 %/°C) × length ÷ cross-section (AWG sizes from ASTM B258). The "wire" setting is a 10 cm 22 AWG jumper, about 5.4 mΩ. |
+| USB | 5 V (the USB standard), through a 1 m cable with 28 AWG copper power wires: about 0.43 Ω, from the wire maths above. |
+| Slide switch | E-Switch EG1218 drawing (P040040 rev C, 10/30/07): SPDT, non-shorting, 0.2 A at 30 V DC, contact resistance 50 mΩ max, insulation resistance 100 MΩ min. Modelled at those limits: 50 mΩ closed, 100 MΩ open. |
+| Push button | E-Switch TL1105 datasheet (dated 2.28.2018), a 6 mm tact switch: 50 mA at 12 V DC, contact resistance 100 mΩ max, insulation resistance 100 MΩ min. Modelled at those limits. |
+| Estimates | LED and resistor heat capacities, and the resistor's burn temperature. Not on datasheets. |
+| Knob | Bourns PTV09 datasheet (REV. 01/25), a 9 mm carbon potentiometer: 10 kΩ ±20 % (the nominal is used); residual resistance "500 ohms or ±1 % max." (500 Ω is used, the most it allows; a real one may leave much less); linear taper B0, a straight line from 5 % to 95 % of the rotational travel; mechanical angle 280°; 0.05 W; 20 V DC. |
+| Knob in 3D | The PTV09A-4 drawing (rear mount, no bushing) with the 15 mm F-type shaft, and the datasheet's recommended board layout. Sizes printed there are used as printed: body 10.0 mm wide and 6.8 mm deep, its top 5.5 mm from the shaft's centre; shaft 6.0 mm across, its tip 15 mm up, with a 6 mm flat leaving 4.5 mm; a collar 1.1 mm deep; the metal ears 11.4 mm across, their legs 2.0 mm wide reaching 3.8 mm below the body, into slots 10.6 mm apart; pins 2.5 mm apart, 7.0 mm from the shaft's centre, 1.5 mm wide where they leave the body. The pin tips are drawn 0.8 × 0.5 mm so they fit the layout's 1.0 mm holes (the A-4 drawing doesn't print them). The rest of the outside is scaled off the drawing. The shaft's flat faces 40° clockwise from the top at full anticlockwise, and the pins in the middle, as drawn. Pins are numbered 1, 2, 3 from the left with the pins towards you, as in the board layout; the taper graph has pin 1 to pin 2 growing as the knob turns from its anticlockwise end. The inside (track, wiper, rotor, silver ends and ring) isn't on the datasheet: it's an illustration of how carbon knobs are built, and the 3D view says so. |
+| Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. |
+
+### Not modelled yet
+
+Capacitors arrive in piece 4, with the time steps they need; inductors in piece 7, with motors and flyback
+diodes. Temperature doesn't yet shift the LED's curve, and batteries don't run down.
+
+## Roadmap
+
+| Piece | Builds | Adds |
+| --- | --- | --- |
+| 1 | Light an LED | DC solver, junctions, heat; the builder, lessons and the workspace |
+| 2 | Switches and buttons: on/off, both (AND), either (OR) | the switch (yours), slide switch, push button |
+| 3 | A knob: a voltage divider, then a dimmer | the knob (yours) |
+| 4 | Capacitors: charge one, then watch an LED fade as it empties | the capacitor (yours); time steps a part can see |
+| 5 | Transistors: a small signal switches a big current | the transistor (yours) |
+| 6 | An ESP32 runs your Arduino code, and reads your buttons and knob | a virtual microcontroller on the same clock; floating inputs, pull-ups, contact bounce |
+| 7 | Motors, H-bridges, flyback diodes, brownouts | the motor; inductors |
+| 8 | The car, steered by Wheel | a 2D robot body |
+
+## Layout
+
+```
+packages/engine   the simulator (pure TypeScript) and its tests
+  src/lesson-*    the part you write in each lesson
+  src/parts       the parts Bench gives you
+apps/web          the bench: React + Vite
+  src/builder     the board: its document, selection, live circuit, editor and shared session
+  src/lessons     lessons as data, with checks on the live circuit
+  src/home        the main menu and the lesson list
+  src/three       parts in 3D (three.js, loaded only when the 3D view opens)
+  src/workspace   the windows and the dock that arranges them
+docs/screens      what each state looks like
+```

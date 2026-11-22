@@ -1,0 +1,2849 @@
+:root {
+  color-scheme: dark;
+  interpolate-size: allow-keywords; /* lets widths animate to and from fit-content */
+
+  --bg: #000;
+  --surface: #0a0a0b;
+  --line: #1c1c1e;
+  --fill: #161618;
+  --fill-raised: #2c2c2e;
+  --text: #f5f5f7;
+  --muted: #8e8e93;
+  --faint: #48484a;
+  --wire: #3a3a3c;
+  --wire-live: #aeaeb2;
+  --part: #e5e5ea;
+  --led: #ff3b30;
+  --red: #ff453a;
+  --hot: #ff9f0a;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--wire-live);
+  outline-offset: 2px;
+}
+
+/* The app fills the window; windows scroll on their own. */
+.app {
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+/* Header */
+.app > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ghost {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms var(--ease-out);
+}
+
+.ghost:active {
+  transform: scale(0.97);
+}
+
+.ghost:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ghost:hover {
+    color: var(--text);
+    border-color: var(--faint);
+  }
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  /* Fingers on the board move parts, draw wires and pan or pinch the view: the page doesn't scroll or zoom under them. */
+  touch-action: none;
+}
+
+.canvas-dot {
+  fill: #1f1f22;
+}
+
+.board.panning,
+.board.panning * {
+  cursor: grabbing;
+}
+
+.zoom {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.zoom button {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .zoom button:hover {
+    color: var(--text);
+    background: var(--fill-raised);
+  }
+}
+
+.zoom-level {
+  min-width: 52px;
+  font-size: 12px;
+}
+
+/* Cards float over the canvas: drag the top bar to move, the chevron to fold. */
+.card.floating {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  z-index: 2;
+  width: min(560px, calc(100% - 32px));
+  padding: 0;
+  transform: translate(calc(-50% + var(--dx, 0px)), var(--dy, 0px));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+  transition:
+    transform 320ms var(--ease-out),
+    width 280ms var(--ease-out),
+    opacity 220ms ease;
+
+  @starting-style {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--dx, 0px)), calc(var(--dy, 0px) + 12px));
+  }
+}
+
+/* While dragging, the card follows the pointer exactly. */
+.floating.moving {
+  transition: width 280ms var(--ease-out);
+}
+
+.floating.collapsed {
+  width: fit-content;
+  max-width: calc(100% - 32px);
+}
+
+.card-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  contain: inline-size; /* the body doesn't widen a folded card */
+  transition: grid-template-rows 280ms var(--ease-out);
+}
+
+.floating.collapsed .card-fold {
+  grid-template-rows: 0fr;
+}
+
+.card-body {
+  min-height: 0;
+  overflow: hidden;
+  transition:
+    opacity 200ms ease,
+    filter 200ms ease;
+}
+
+.floating.collapsed .card-body {
+  opacity: 0;
+  filter: blur(2px);
+}
+
+.card-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 10px 20px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.floating.moving .card-bar {
+  cursor: grabbing;
+}
+
+.card-heading {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.card-heading h2 {
+  margin-bottom: 0;
+}
+
+.card-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.card-toggle svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 280ms var(--ease-out);
+}
+
+.floating.collapsed .card-toggle svg {
+  transform: rotate(180deg);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .card-toggle:hover {
+    color: var(--text);
+    background: var(--fill-raised);
+  }
+}
+
+.card-inner {
+  padding: 0 20px 18px;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Segmented control */
+.segmented {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--count), 1fr);
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--fill);
+}
+
+.segmented-thumb {
+  position: absolute;
+  inset: 2px auto 2px 2px;
+  width: calc((100% - 4px) / var(--count));
+  border-radius: 8px;
+  background: var(--fill-raised);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  transform: translateX(calc(var(--index) * 100%));
+  transition: transform 220ms var(--ease-out);
+}
+
+.segmented button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    transform 120ms var(--ease-out);
+}
+
+.segmented button:active {
+  transform: scale(0.97);
+}
+
+.segmented button[aria-checked='true'] {
+  color: var(--text);
+}
+
+.segmented small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Resistor */
+.resistor-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.resistor-value output {
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-resistor {
+  display: inline-flex;
+  gap: 3px;
+  align-items: stretch;
+  height: 12px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: #d9c4a0;
+}
+
+.mini-resistor span {
+  width: 3px;
+}
+
+input[type='range'] {
+  --thumb: 20px;
+
+  width: 100%;
+  height: var(--thumb);
+  margin: 4px 0 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--text) var(--fill), var(--fill-raised) var(--fill));
+}
+
+input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--text) var(--fill), var(--fill-raised) var(--fill));
+}
+
+input[type='range']::-webkit-slider-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: calc((4px - var(--thumb)) / 2);
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
+  appearance: none;
+  transition: transform 120ms var(--ease-out);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+input[type='range']:active::-webkit-slider-thumb {
+  transform: scale(1.1);
+}
+
+.link {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.aside {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* LED graph */
+/* Grows to fill a tall window; in a short one it keeps its minimum and the window scrolls. */
+.iv {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  margin: 0;
+}
+
+/* The plot takes whatever room its window has; the graph measures it and draws to fit. */
+.iv-plot {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 180px;
+}
+
+.iv-plot svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.graph-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.iv-grid {
+  stroke: #1c1c1e;
+  stroke-width: 1;
+}
+
+.iv-axis {
+  fill: none;
+  stroke: var(--faint);
+  stroke-width: 1;
+}
+
+.iv-tick,
+.iv-label,
+.iv-max-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.iv-max {
+  stroke: var(--hot);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.7;
+}
+
+.iv-max-label {
+  fill: var(--hot);
+  opacity: 0.8;
+}
+
+.iv-load {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.iv-curve {
+  fill: none;
+  stroke: var(--led);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.iv-datasheet {
+  fill: var(--bg);
+  stroke: var(--text);
+  stroke-width: 1.25;
+}
+
+.iv-reading {
+  fill: var(--text);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.iv-dot circle {
+  fill: var(--text);
+  stroke: var(--bg);
+  stroke-width: 2;
+}
+
+.iv-dot path {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+
+.iv figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.key::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-top: 2px solid var(--led);
+}
+
+.key-datasheet::before {
+  width: 6px;
+  height: 6px;
+  border: 1.25px solid var(--text);
+  border-radius: 50%;
+}
+
+.key-load::before {
+  border-top: 1.5px dashed var(--muted);
+}
+
+.graph-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* Cards on the stage: your turn, problems */
+.card {
+  width: 100%;
+  max-width: 560px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.card .eyebrow {
+  margin: 0 0 2px;
+  font-size: 12px;
+  color: var(--led);
+}
+
+.card h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.card p + p {
+  margin-top: 8px;
+}
+
+.card ol,
+.card ul {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.card .path {
+  margin-top: 12px;
+}
+
+.card pre {
+  margin: 6px 0 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.problem .eyebrow {
+  color: var(--hot);
+}
+
+.crash {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.card code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--fill);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.copy {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Schematic */
+.wire-line {
+  fill: none;
+  stroke: var(--wire);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  transition: stroke 120ms ease;
+}
+
+.wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 20;
+  stroke-linejoin: round;
+  cursor: pointer;
+  outline: none;
+}
+
+.wire-hit:focus-visible {
+  stroke: rgb(255 255 255 / 0.06);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .wire-hit:hover {
+    stroke: rgb(255 255 255 / 0.05);
+  }
+}
+
+.flow {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.symbol {
+  fill: none;
+  stroke: var(--part);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 300ms ease;
+}
+
+.label,
+.value,
+.sign,
+.temperature {
+  fill: var(--muted);
+  font-size: 13px;
+}
+
+.value {
+  fill: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.temperature {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.temperature.hot {
+  fill: var(--hot);
+}
+
+.resistor.burnt .symbol {
+  stroke: #48484a;
+  stroke-dasharray: 3 5;
+}
+
+.led-body {
+  fill: var(--led);
+  stroke: var(--part);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.led .arrows {
+  stroke: var(--muted);
+}
+
+.led.burnt .led-body {
+  fill: #2c2c2e;
+  fill-opacity: 1;
+  stroke: #48484a;
+}
+
+.led.burnt .arrows {
+  opacity: 0;
+}
+
+.led.unwritten .symbol,
+.led.unwritten .led-body {
+  stroke: var(--faint);
+  stroke-dasharray: 4 4;
+  fill-opacity: 0;
+}
+
+.led.unwritten .label {
+  fill: var(--faint);
+}
+
+/* Replace pill */
+.pill {
+  cursor: pointer;
+  outline: none;
+}
+
+.pill rect {
+  fill: var(--text);
+  transition: transform 120ms var(--ease-out);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.pill text {
+  fill: var(--bg);
+  font-size: 12.5px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.pill:active rect {
+  transform: scale(0.96);
+}
+
+.pill:focus-visible rect {
+  stroke: var(--wire-live);
+  stroke-width: 2;
+}
+
+/* Burn-out: a flash, then a few puffs of smoke. Rare, so it's allowed a moment. */
+.burst .flash {
+  fill: #fff;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: flash 420ms var(--ease-out);
+}
+
+.burst .puff {
+  fill: #8e8e93;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: puff 1800ms var(--ease-out) forwards;
+}
+
+.burst .puff:nth-child(2) {
+  --drift: -10px;
+}
+
+.burst .puff:nth-child(3) {
+  --drift: 8px;
+  animation-delay: 140ms;
+}
+
+.burst .puff:nth-child(4) {
+  --drift: -2px;
+  animation-delay: 280ms;
+}
+
+@keyframes flash {
+  from {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+
+@keyframes puff {
+  from {
+    opacity: 0.55;
+    transform: translate(0, 0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate(var(--drift), -56px) scale(2.4);
+  }
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Build mode: the board */
+.board.moving,
+.board.moving * {
+  cursor: grabbing;
+}
+
+.board.wiring,
+.board.wiring * {
+  cursor: crosshair;
+}
+
+.board.moving .wire-hit,
+.board.wiring .wire-hit {
+  pointer-events: none;
+}
+
+.board .wire-line.selected {
+  stroke: var(--wire-live);
+}
+
+.part {
+  cursor: grab;
+  outline: none;
+  touch-action: none;
+}
+
+.part-hit {
+  fill: transparent;
+}
+
+.selection {
+  fill: none;
+  stroke: var(--wire-live);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 4;
+  opacity: 0;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+  transition: opacity 120ms ease;
+}
+
+.part.selected .selection {
+  opacity: 0.6;
+}
+
+.part:focus-visible .selection {
+  opacity: 1;
+}
+
+.part.resistor.over .symbol {
+  stroke: var(--hot);
+}
+
+.board .led-body,
+.palette-icon .led-body {
+  fill-opacity: 0.18;
+}
+
+/* Switches and buttons: the rings their contacts touch, and the lever or cap you press. */
+.contact {
+  fill: var(--bg);
+  stroke: var(--part);
+  stroke-width: 2;
+}
+
+.palette-icon .contact {
+  fill: none;
+}
+
+/* No easing on the lever or cap: a switch snaps, and a click should feel instant. */
+.actuator-hit {
+  fill: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .actuator-hit:hover {
+    fill: var(--wire-live);
+    fill-opacity: 0.08;
+  }
+}
+
+.part.switch.over .symbol,
+.part.button.over .symbol,
+.part.switch.over .contact,
+.part.button.over .contact {
+  stroke: var(--hot);
+}
+
+.switch.unwritten .symbol,
+.button.unwritten .symbol,
+.switch.unwritten .contact,
+.button.unwritten .contact {
+  stroke: var(--faint);
+  stroke-dasharray: 4 4;
+}
+
+.switch.unwritten .label,
+.button.unwritten .label,
+.knob.unwritten .label {
+  fill: var(--faint);
+}
+
+/* A knob: its dial is the handle, and the wiper slides along the track as it turns. */
+.dial {
+  fill: var(--surface);
+}
+
+.part.knob.over .symbol {
+  stroke: var(--hot);
+}
+
+.knob.unwritten .symbol {
+  stroke: var(--faint);
+  stroke-dasharray: 4 4;
+}
+
+.knob-ends {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.led-light {
+  fill: var(--led);
+  pointer-events: none;
+}
+
+.ghost-part {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Pins: hollow until something is wired to them */
+.pin-group {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pin-hit {
+  fill: transparent;
+}
+
+.pin {
+  fill: var(--bg);
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  transition:
+    r 120ms var(--ease-out),
+    fill 120ms ease,
+    stroke 120ms ease;
+}
+
+.pin-group.connected .pin {
+  r: 3px;
+  fill: var(--part);
+  stroke: var(--part);
+}
+
+.pin-group.lit .pin {
+  r: 6px;
+  fill: var(--text);
+  stroke: var(--text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pin-group:hover .pin {
+    r: 6px;
+    stroke: var(--text);
+  }
+}
+
+/* Junctions: where a wire was tapped. The dot is the part; its pin hides under it until you point at it. */
+.junction-dot {
+  fill: var(--part);
+}
+
+.junction-dot.preview {
+  fill: var(--wire-live);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.junction-pin .pin {
+  opacity: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .junction-pin:hover .pin {
+    r: 8px;
+    opacity: 1;
+    fill: none;
+    stroke: var(--text);
+  }
+}
+
+.wire-draft {
+  fill: none;
+  stroke: var(--wire-live);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.wire-draft.landing {
+  stroke-dasharray: none;
+}
+
+.pin-tip {
+  font-size: 12px;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.pin-name {
+  fill: var(--muted);
+}
+
+.pin-volts {
+  fill: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.empty-hint p {
+  margin: 0;
+}
+
+.empty-hint p + p {
+  margin-top: 4px;
+  color: var(--faint);
+}
+
+/* Build mode: the parts box */
+.palette {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 8px;
+}
+
+.palette-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: grab;
+  touch-action: none;
+  transition:
+    border-color 150ms ease,
+    opacity 150ms ease,
+    transform 120ms var(--ease-out);
+}
+
+.palette-item:active {
+  transform: scale(0.97);
+}
+
+.palette-item.carried {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .palette-item:hover {
+    border-color: var(--faint);
+  }
+}
+
+.palette-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.palette-icon .symbol,
+.palette-icon .led-body {
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.palette-icon .sign {
+  display: none;
+}
+
+.palette-name {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Build mode: what's selected */
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inspector h2 {
+  margin: 0;
+}
+
+.inspector-blurb,
+.inspector-empty,
+.notice-row p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.readings {
+  margin: 0;
+}
+
+.readings div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.readings div:first-child {
+  border-top: 1px solid var(--line);
+}
+
+.readings dt {
+  color: var(--muted);
+}
+
+.readings dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.actions kbd {
+  margin-left: 6px;
+}
+
+.warning {
+  margin: 0;
+  color: var(--hot);
+}
+
+.notice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Spec sheet: a part's datasheet numbers, where each comes from, and your edits */
+.spec {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.spec-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.spec-head p {
+  margin: 0;
+}
+
+.spec-eyebrow,
+.spec-doc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.spec-model {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.spec-maker {
+  color: var(--muted);
+}
+
+.spec-section h3,
+.spec-fixed dt {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.spec-fixed {
+  margin: 0;
+}
+
+.spec-fixed div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.spec-fixed dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.spec-fixed p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.spec-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.spec-section h3 + .spec-row {
+  border-top: 1px solid var(--line);
+}
+
+.spec-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.spec-symbol {
+  margin-left: 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.spec-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.spec-value-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.spec-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.spec-unit {
+  margin-left: 5px;
+  color: var(--muted);
+}
+
+.spec-chip {
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The less certain the source, the lighter the outline. */
+.spec-chip.typical,
+.spec-chip.estimate {
+  border-style: dashed;
+  border-color: var(--faint);
+}
+
+.spec-legend summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.spec-legend dl {
+  margin: 10px 0 0;
+}
+
+.spec-legend div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+
+.spec-legend dt {
+  color: var(--text);
+}
+
+.spec-legend dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.spec-link {
+  align-self: flex-start;
+}
+
+.see-also {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The 3D window: the part fills it; what you can do sits round the edges. */
+.pane-3d {
+  background: radial-gradient(120% 90% at 50% 38%, #141416 0%, var(--surface) 55%, var(--bg) 100%);
+}
+
+.viewer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.viewer-stage {
+  position: absolute;
+  inset: 0;
+  outline: none;
+  touch-action: none;
+}
+
+.viewer-stage:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--wire-live);
+}
+
+.viewer-stage > canvas {
+  display: block;
+}
+
+.viewer-stage.point canvas {
+  cursor: pointer;
+}
+
+.viewer-stage.grab canvas {
+  cursor: grab;
+}
+
+.viewer-stage.turning canvas {
+  cursor: grabbing;
+}
+
+.viewer-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.viewer-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgb(10 10 11 / 0.82);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.viewer-tag.piece {
+  border-color: color-mix(in srgb, var(--tint) 50%, transparent);
+  color: var(--text);
+}
+
+.viewer-failed {
+  margin: 0;
+  padding: 24px;
+  color: var(--muted);
+}
+
+.viewer-top,
+.viewer-card,
+.viewer-foot {
+  position: absolute;
+  z-index: 1;
+}
+
+/* The title on the left and the buttons on the right; in a narrow window the buttons go underneath. */
+.viewer-top {
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 12px 0 14px;
+  pointer-events: none;
+}
+
+.viewer-head {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+.viewer-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.viewer-title span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.viewer-hint {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.viewer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.viewer .chip {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgb(10 10 11 / 0.78);
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms var(--ease-out);
+}
+
+.viewer .chip:active {
+  transform: scale(0.97);
+}
+
+.viewer .chip.on {
+  border-color: var(--faint);
+  background: var(--fill-raised);
+  color: var(--text);
+}
+
+.viewer .chip.off {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .viewer .chip:hover {
+    border-color: var(--faint);
+    color: var(--text);
+  }
+}
+
+.viewer-card {
+  bottom: 104px;
+  left: 12px;
+  display: grid;
+  gap: 8px;
+  width: min(340px, calc(100% - 24px));
+  max-height: calc(100% - 180px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgb(10 10 11 / 0.92);
+  font-size: 14px;
+}
+
+.viewer-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.viewer-card h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.viewer-card p {
+  margin: 0;
+}
+
+.viewer-card .icon {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.viewer-source {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.viewer-live {
+  display: grid;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.viewer-live span,
+.viewer-readout span[style] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viewer-live span::before,
+.viewer-readout span[style]::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--tint);
+}
+
+.viewer-foot {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.85), transparent);
+}
+
+.viewer-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.viewer-pieces {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+
+.viewer-help {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+
+/* Workspace: dockview's spaced layout, in Bench's colours */
+.dock {
+  position: relative;
+  min-height: 0;
+}
+
+.dock .dockview-theme-abyss-spaced {
+  --dv-color-abyss-dark: var(--bg);
+  --dv-color-abyss: var(--surface);
+  --dv-color-abyss-light: var(--surface);
+  --dv-color-abyss-lighter: var(--fill-raised);
+  --dv-color-abyss-accent: var(--faint);
+  --dv-color-abyss-primary-text: var(--text);
+  --dv-color-abyss-secondary-text: var(--muted);
+  --dv-spacing-padding: 6px;
+  --dv-tabs-and-actions-container-height: 40px;
+  --dv-tab-font-size: 13px;
+  --dv-drag-over-background-color: rgb(255 255 255 / 0.05);
+  --dv-floating-box-shadow: 0 16px 48px rgb(0 0 0 / 0.7);
+  --dv-floating-border: 1px solid var(--line);
+  --dv-icon-hover-background-color: var(--fill-raised);
+
+  font-family: var(--sans);
+}
+
+.dock .dv-groupview {
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+
+.group-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  padding: 0 4px;
+}
+
+.group-actions button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.group-actions svg,
+.menu svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .group-actions button:hover {
+    color: var(--text);
+    background: var(--fill-raised);
+  }
+}
+
+/* Every window's content: the board fills it, the rest scroll. */
+.pane {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.pane-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+}
+
+.pane-parts {
+  padding: 12px;
+}
+
+.pane-note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Windows menu */
+.menu-anchor {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1000;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.7);
+  transform-origin: top right;
+  animation: menu-in 140ms var(--ease-out);
+}
+
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .menu button:hover {
+    background: var(--fill-raised);
+  }
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+/* Right-click menu: the same look as the Windows menu, opened at the pointer */
+.menu.context-menu {
+  position: fixed;
+  right: auto;
+  min-width: 220px;
+  z-index: 2000;
+}
+
+.context-menu button {
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.context-menu button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.context-menu button.danger {
+  color: var(--red);
+}
+
+.context-menu kbd {
+  border: 0;
+  padding: 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.context-menu button:disabled kbd {
+  color: var(--faint);
+}
+
+.menu button:focus-visible {
+  outline: none;
+  background: var(--fill-raised);
+}
+
+.menu-heading {
+  margin: 0;
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.menu-note {
+  max-width: 220px;
+  margin: 4px 0 2px;
+  padding: 6px 10px 4px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--faint);
+}
+
+/* Dockview's own tab menu, made to match */
+.dv-context-menu {
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.7);
+}
+
+.dv-context-menu-item {
+  height: auto;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.dv-context-menu-item:hover {
+  background: var(--fill-raised);
+}
+
+.dv-context-menu-separator {
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+/* Selecting and panning on the board */
+.marquee {
+  fill: rgb(255 255 255 / 0.04);
+  stroke: var(--wire-live);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.board.boxing,
+.board.boxing * {
+  cursor: crosshair;
+}
+
+.board.space,
+.board.space * {
+  cursor: grab;
+}
+
+.board.space.panning,
+.board.space.panning * {
+  cursor: grabbing;
+}
+
+.canvas-bg {
+  cursor: default;
+}
+
+/* Lessons */
+.lesson {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.lesson-eyebrow {
+  margin: 0 0 -10px;
+  font-size: 12px;
+  color: var(--led);
+}
+
+.lesson-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.lesson-goal {
+  margin: 0;
+  color: var(--muted);
+}
+
+.lesson-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.lesson-bar {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--fill-raised);
+}
+
+.lesson-bar span {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  transform: scaleX(var(--done));
+  transform-origin: left;
+  transition: transform 400ms var(--ease-out);
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 10px 8px 8px;
+  border-radius: 10px;
+}
+
+.step.current {
+  background: var(--fill);
+}
+
+.step-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--faint);
+  border-radius: 50%;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.step.current .step-mark {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.step.done .step-mark {
+  border-color: transparent;
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* Ticking a step off happens a handful of times per lesson: it gets a small pop. */
+.step.done .step-mark svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: tick 260ms var(--ease-out);
+}
+
+@keyframes tick {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
+.step-title {
+  margin: 1px 0 0;
+}
+
+.step.done .step-title {
+  color: var(--muted);
+}
+
+.step.later .step-title {
+  color: var(--faint);
+}
+
+.step-detail {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.lesson-done {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--fill);
+}
+
+.lesson-done p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.lesson-done .lesson-done-title {
+  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lesson .link {
+  align-self: flex-start;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Narrow screens: one column of cards instead of docked windows */
+.stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px 24px;
+}
+
+.stack-board {
+  position: relative;
+  height: 70vh;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.stack-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.stack-card > h2 {
+  margin: 16px 16px -6px;
+}
+
+.stack-card .pane {
+  height: auto;
+}
+
+.stack-3d .pane {
+  height: 75vh;
+  margin-top: 12px;
+  border-radius: 0 0 12px 12px;
+}
+
+.stack-3d-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px 0 0;
+}
+
+.stack-3d-head h2 {
+  margin: 4px 16px;
+}
+
+.stack-3d-note {
+  margin: 8px 16px 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.viewer-loading {
+  padding: 16px;
+}
+
+/* On a phone, an up-and-down swipe over the part tiles scrolls the page (the board above takes every touch);
+   a tap still adds the part, in the middle of the view. */
+.stacked .palette-item {
+  touch-action: pan-y;
+}
+
+/* Home: the main menu and the lesson list, like a game's title screens */
+.home {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 48px 24px;
+  overflow: hidden;
+}
+
+/* The board's dot grid, fading out from the middle. */
+.home::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, #1f1f22 1px, transparent 1.5px);
+  background-size: 20px 20px;
+  mask-image: radial-gradient(ellipse at center, #000 20%, transparent 70%);
+  pointer-events: none;
+}
+
+.home-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: min(440px, 100%);
+}
+
+.home-inner.wide {
+  width: min(620px, 100%);
+}
+
+.home-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.home-brand h1 {
+  margin: 0;
+  font-size: 48px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+/* An LED, lit, breathing slowly: the first thing you make here. */
+.home-led {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--led);
+  box-shadow:
+    0 0 10px 2px rgb(255 59 48 / 0.6),
+    0 0 44px 12px rgb(255 59 48 / 0.18);
+  animation: breathe 3.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.72;
+    box-shadow:
+      0 0 8px 1px rgb(255 59 48 / 0.45),
+      0 0 32px 8px rgb(255 59 48 / 0.1);
+  }
+}
+
+.home-tagline {
+  margin: -14px 0 0;
+  color: var(--muted);
+}
+
+.home-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.home-item,
+.lesson-list > li {
+  animation: home-in 420ms var(--ease-out) both;
+  animation-delay: calc(var(--i) * 50ms + 80ms);
+}
+
+@keyframes home-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.home-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  row-gap: 2px;
+  padding: 14px 18px 14px 12px;
+  border-radius: 14px;
+  color: var(--muted);
+  text-decoration: none;
+  outline: none;
+  /* The highlight jumps; only a press animates. Menus are moved through too often to wait on. */
+  transition: transform 120ms var(--ease-out);
+}
+
+.home-item[data-active='true'] {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.home-item:active {
+  transform: scale(0.99);
+}
+
+.home-item:focus-visible {
+  box-shadow: inset 0 0 0 1.5px var(--faint);
+}
+
+/* A small lit LED marks the highlighted item. */
+.home-item-mark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--led);
+  box-shadow: 0 0 8px 2px rgb(255 59 48 / 0.5);
+  opacity: 0;
+}
+
+.home-item[data-active='true'] .home-item-mark {
+  opacity: 1;
+}
+
+.home-item-title {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.home-item-detail {
+  grid-column: 2;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.home-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin-bottom: -16px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+.back svg,
+.lesson-card-status svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .back:hover {
+    color: var(--text);
+  }
+}
+
+.screen-title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.lesson-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lesson-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  outline: none;
+  transition: transform 120ms var(--ease-out);
+}
+
+a.lesson-card[data-active='true'] {
+  border-color: var(--faint);
+  background: var(--fill);
+}
+
+a.lesson-card:active {
+  transform: scale(0.99);
+}
+
+.lesson-card.locked {
+  color: var(--faint);
+}
+
+.lesson-number {
+  display: grid;
+  grid-row: span 2;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--fill-raised);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.lesson-card.locked .lesson-number {
+  background: var(--fill);
+}
+
+.lesson-card-title {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.lesson-card-goal {
+  grid-column: 2;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.lesson-card.locked .lesson-card-goal {
+  color: var(--faint);
+}
+
+.lesson-card-status {
+  display: inline-flex;
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.lesson-card-bar {
+  grid-column: 2 / span 2;
+  height: 3px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--fill-raised);
+}
+
+.lesson-card-bar span {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  transform: scaleX(var(--done));
+  transform-origin: left;
+}
+
+/* The workspace header's trail back to the menu */
+.crumbs {
+  gap: 10px;
+}
+
+.crumbs a {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+.crumbs a.brand {
+  color: var(--text);
+}
+
+.crumbs [aria-current='page'] {
+  color: var(--text);
+}
+
+.crumb-gap {
+  color: var(--faint);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .crumbs a:hover {
+    color: var(--text);
+  }
+}
+
+.lesson-next {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px !important;
+}
+
+.lesson-next a {
+  color: var(--text);
+}
+
+/* Multimeter: its face in the Meter window, its leads on the board (restored from Chapter 1) */
+.display {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.reading {
+  display: block;
+  font-family: var(--mono);
+  font-size: 40px;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.reading .unit {
+  margin-left: 0.05em;
+  font-family: var(--sans);
+  font-size: 0.6em;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.reading.idle {
+  color: var(--faint);
+}
+
+.hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.guess {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.guess label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.guess-row {
+  display: flex;
+  gap: 8px;
+}
+
+.guess input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--fill);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.guess input:focus {
+  border-color: var(--faint);
+}
+
+.guess input[aria-invalid='true'] {
+  border-color: var(--red);
+}
+
+.guess button[type='submit'] {
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    opacity 150ms ease,
+    transform 120ms var(--ease-out);
+}
+
+.guess button[type='submit']:active {
+  transform: scale(0.97);
+}
+
+.guess button[type='submit']:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.verdict {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.verdict strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+}
+
+.switch-row small {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.toggle {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 13px;
+  background: var(--fill-raised);
+  cursor: pointer;
+  transition: background-color 200ms ease;
+}
+
+.toggle[aria-checked='true'] {
+  background: var(--text);
+}
+
+.switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  transition:
+    transform 220ms var(--ease-out),
+    background-color 200ms ease;
+}
+
+.toggle[aria-checked='true'] .switch-knob {
+  background: var(--bg);
+  transform: translateX(18px);
+}
+
+.dragging .wire-hit {
+  pointer-events: none;
+}
+
+.jack {
+  fill: var(--bg);
+  stroke-width: 2;
+}
+
+.jack-red {
+  stroke: var(--red);
+}
+
+.jack-black,
+.jack-clamp {
+  stroke: var(--part);
+}
+
+.jack-label {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.snap {
+  fill: none;
+  stroke: var(--wire-live);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.tool {
+  cursor: grab;
+  touch-action: none;
+}
+
+.tool.held {
+  cursor: grabbing;
+}
+
+/* Only the grip picks a lead up; the needle, jaws and cable let clicks through to the board. */
+.tool > * {
+  pointer-events: none;
+}
+
+.tool > .tool-hit {
+  pointer-events: all;
+}
+
+.tool-hit {
+  fill: transparent;
+}
+
+.cable {
+  fill: none;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  opacity: 0.5;
+}
+
+.grip-edge {
+  stroke: #48484a;
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.tool-red .grip-edge {
+  stroke: none;
+}
+
+.needle {
+  stroke: #c7c7cc;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.grip {
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.tool-red .cable,
+.tool-red .grip {
+  stroke: var(--red);
+}
+
+.tool-black .cable,
+.tool-clamp .cable {
+  stroke: #636366;
+}
+
+.tool-black .grip,
+.tool-clamp .grip {
+  stroke: #1c1c1e;
+}
+
+.clamp-jaw {
+  fill: none;
+  stroke: var(--part);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+.tool.held .grip {
+  stroke-width: 8;
+}
+
+.tool.held .grip-edge {
+  stroke-width: 10;
+}
+
+.jack-label {
+  fill: var(--muted);
+}
+
+.meter-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.meter-pane .link {
+  align-self: flex-start;
+}
+
+/* The meter's own little display, beside its sockets on the board */
+.meter-chip rect {
+  fill: var(--surface);
+  stroke: var(--line);
+}
+
+.meter-chip text {
+  fill: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .flow {
+    display: none;
+  }
+
+  .burst .flash,
+  .burst .puff {
+    animation-name: fade;
+  }
+
+  .segmented-thumb,
+  .switch-knob,
+  .pin,
+  .floating,
+  .card-fold,
+  .card-body,
+  .card-toggle svg,
+  .lesson-bar span,
+  .menu,
+  .home-item,
+  .lesson-card {
+    transition: none;
+    animation: none;
+  }
+
+  .step.done .step-mark svg,
+  .home-item,
+  .lesson-list > li,
+  .home-led {
+    animation: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0.5;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+/* Narrow screens: the windows stack in one column, and the page scrolls as usual. */
+@media (max-width: 900px) {
+  .app {
+    height: auto;
+    overflow: visible;
+  }
+
+  /* The header's buttons drop to a second row rather than overflow. */
+  .app > header {
+    flex-wrap: wrap;
+    row-gap: 10px;
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .header-actions {
+    margin-left: auto;
+  }
+}

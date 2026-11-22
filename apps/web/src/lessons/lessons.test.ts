@@ -1,0 +1,316 @@
+import { Circuit, GROUND, NotWrittenYet, Potentiometer, Switch } from '@bench/engine';
+import { describe, expect, it } from 'vitest';
+import { addWire, EMPTY_BOARD, removePart, setProp, type Board } from '../builder/board';
+import { ledLoop, place } from '../builder/fixtures';
+import { METER_START, type MeterState } from '../builder/meter';
+import { BoardSim } from '../builder/sync';
+import { A_KNOB, LIGHT_AN_LED, SWITCHES_AND_BUTTONS, type Lesson } from './lessons';
+import { advance, currentStep } from './progress';
+
+/** Plays a lesson against a board: checks the current step each frame, as the page does. */
+function play(
+  lesson: Lesson,
+  sim: BoardSim,
+  board: Board,
+  seconds: number,
+  done: ReadonlySet<string> = new Set(),
+  meter: MeterState = METER_START,
+) {
+  sim.sync(board);
+  let progress = done;
+  for (let t = 0; t < seconds; t += 1 / 60) {
+    sim.step(1 / 60);
+    progress = advance(lesson, progress, { board, snapshot: sim.getSnapshot(), meter });
+  }
+  return progress;
+}
+
+const stepAt = (done: ReadonlySet<string>) => currentStep(LIGHT_AN_LED, done)?.id;
+
+describe('Lesson 1: Light an LED', () => {
+  it('starts by asking for a battery', () => {
+    expect(stepAt(play(LIGHT_AN_LED, new BoardSim(), EMPTY_BOARD, 0.1))).toBe('battery');
+  });
+
+  it('takes a well-built 330 Ω loop all the way to burning one out', () => {
+    const { board } = ledLoop(330);
+    expect(stepAt(play(LIGHT_AN_LED, new BoardSim(), board, 0.5))).toBe('burn');
+  });
+
+  it('won’t pass a loop that lights the LED too dimly (1 kΩ: about 7 mA)', () => {
+    expect(stepAt(play(LIGHT_AN_LED, new BoardSim(), ledLoop(1000).board, 0.5))).toBe('rated');
+  });
+
+  it('won’t pass a loop that runs it over its rating (68 Ω)', () => {
+    expect(stepAt(play(LIGHT_AN_LED, new BoardSim(), ledLoop(68).board, 0.5))).toBe('rated');
+  });
+
+  it('won’t light an LED wired backwards', () => {
+    let board = EMPTY_BOARD;
+    const battery = place(board, 'battery');
+    const resistor = place(battery.board, 'resistor', 0, 0, { ohms: 330 });
+    const led = place(resistor.board, 'led');
+    board = addWire(led.board, { part: battery.id, pin: 'plus' }, { part: resistor.id, pin: 'a' });
+    board = addWire(board, { part: resistor.id, pin: 'b' }, { part: led.id, pin: 'cathode' });
+    board = addWire(board, { part: led.id, pin: 'anode' }, { part: battery.id, pin: 'minus' });
+    expect(stepAt(play(LIGHT_AN_LED, new BoardSim(), board, 0.5))).toBe('glow');
+  });
+
+  it('needs a ground wired in, not just placed', () => {
+    const loop = ledLoop(330);
+    const floating = removePart(loop.board, loop.ground);
+    const unwired = place(floating, 'ground', 300, 300).board;
+    expect(stepAt(play(LIGHT_AN_LED, new BoardSim(), unwired, 0.5))).toBe('ground');
+  });
+
+  it('finishes once a burnt LED is replaced and run safely again', () => {
+    const loop = ledLoop(330);
+    const sim = new BoardSim();
+    let done = play(LIGHT_AN_LED, sim, loop.board, 0.5);
+    const hot = setProp(loop.board, loop.resistor, 'ohms', 68);
+    done = play(LIGHT_AN_LED, sim, hot, 6, done);
+    expect(stepAt(done)).toBe('replace');
+    // Still burnt: nothing lights, so it isn't done.
+    done = play(LIGHT_AN_LED, sim, loop.board, 0.5, done);
+    expect(stepAt(done)).toBe('replace');
+    sim.replace(loop.led);
+    done = play(LIGHT_AN_LED, sim, loop.board, 0.5, done);
+    expect(stepAt(done)).toBeUndefined();
+  });
+});
+
+/** Lesson 2 needs your switch (packages/engine/src/lesson-2-switches/switch.ts): until it's written, a switch isn't in the circuit. */
+const switchWritten = (() => {
+  try {
+    new Switch('S1', new Circuit().node('a'), GROUND).stamp({
+      time: 0,
+      ambient: 25,
+      internal: () => GROUND,
+      conductance: () => undefined,
+      currentSource: () => undefined,
+      voltageSource: () => 0 as never,
+      junction: () => undefined,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof NotWrittenYet) return false;
+    throw error;
+  }
+})();
+
+/** Battery → slide switch (common in, side A out) → 330 Ω → LED → back to the battery. */
+function switchLoop() {
+  let board = EMPTY_BOARD;
+  const battery = place(board, 'battery');
+  const sw = place(battery.board, 'switch');
+  const resistor = place(sw.board, 'resistor', 0, 0, { ohms: 330 });
+  const led = place(resistor.board, 'led');
+  board = addWire(led.board, { part: battery.id, pin: 'plus' }, { part: sw.id, pin: 'common' });
+  board = addWire(board, { part: sw.id, pin: 'a' }, { part: resistor.id, pin: 'a' });
+  board = addWire(board, { part: resistor.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+  board = addWire(board, { part: led.id, pin: 'cathode' }, { part: battery.id, pin: 'minus' });
+  return { board, battery: battery.id, sw: sw.id, resistor: resistor.id, led: led.id };
+}
+
+/** Battery → two buttons → 330 Ω → LED → back: in series (one after the other) or in parallel (side by side). */
+function buttonLoop(how: 'series' | 'parallel') {
+  let board = EMPTY_BOARD;
+  const battery = place(board, 'battery');
+  const one = place(battery.board, 'button');
+  const two = place(one.board, 'button');
+  const resistor = place(two.board, 'resistor', 0, 0, { ohms: 330 });
+  const led = place(resistor.board, 'led');
+  board = addWire(led.board, { part: battery.id, pin: 'plus' }, { part: one.id, pin: 'a' });
+  if (how === 'series') {
+    board = addWire(board, { part: one.id, pin: 'b' }, { part: two.id, pin: 'a' });
+  } else {
+    board = addWire(board, { part: battery.id, pin: 'plus' }, { part: two.id, pin: 'a' });
+    board = addWire(board, { part: one.id, pin: 'b' }, { part: two.id, pin: 'b' });
+  }
+  board = addWire(board, { part: two.id, pin: 'b' }, { part: resistor.id, pin: 'a' });
+  board = addWire(board, { part: resistor.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+  board = addWire(board, { part: led.id, pin: 'cathode' }, { part: battery.id, pin: 'minus' });
+  return { board, one: one.id, two: two.id };
+}
+
+const stepOf = (done: ReadonlySet<string>) => currentStep(SWITCHES_AND_BUTTONS, done)?.id;
+
+describe.runIf(switchWritten)('Lesson 2: Switches and buttons', () => {
+  it('lights through the switch, goes dark when it’s flipped, then wants the meter across the gap', () => {
+    const loop = switchLoop();
+    const sim = new BoardSim();
+    let done = play(SWITCHES_AND_BUTTONS, sim, loop.board, 0.2);
+    expect(stepOf(done)).toBe('off');
+    const flipped = setProp(loop.board, loop.sw, 'side', 'b');
+    done = play(SWITCHES_AND_BUTTONS, sim, flipped, 0.2, done);
+    expect(stepOf(done)).toBe('gap');
+    // Leads on common and side A (the open one now), either way round.
+    const meter: MeterState = {
+      mode: 'volts',
+      leads: { red: { kind: 'pin', pin: { part: loop.sw, pin: 'a' } }, black: { kind: 'pin', pin: { part: loop.sw, pin: 'common' } } },
+    };
+    done = play(SWITCHES_AND_BUTTONS, sim, flipped, 0.2, done, meter);
+    expect(stepOf(done)).toBe('button');
+  });
+
+  it('won’t count the gap with the leads on the closed side', () => {
+    const loop = switchLoop();
+    const sim = new BoardSim();
+    const flipped = setProp(loop.board, loop.sw, 'side', 'b');
+    const meter: MeterState = {
+      mode: 'volts',
+      leads: { red: { kind: 'pin', pin: { part: loop.sw, pin: 'common' } }, black: { kind: 'pin', pin: { part: loop.sw, pin: 'b' } } },
+    };
+    const done = play(SWITCHES_AND_BUTTONS, sim, flipped, 0.2, new Set(['loop', 'off']), meter);
+    expect(stepOf(done)).toBe('gap');
+  });
+
+  it('lights through a button only while it’s held', () => {
+    const { board, one, two } = buttonLoop('series');
+    const sim = new BoardSim();
+    const before = new Set(['loop', 'off', 'gap']);
+    expect(stepOf(play(SWITCHES_AND_BUTTONS, sim, board, 0.2, before))).toBe('button');
+    sim.press(one, true);
+    expect(stepOf(play(SWITCHES_AND_BUTTONS, sim, board, 0.2, before))).toBe('button'); // two is still up
+    sim.press(two, true);
+    expect(stepOf(play(SWITCHES_AND_BUTTONS, sim, board, 0.2, before))).toBe('or'); // both down, in series: AND too
+  });
+
+  it('takes two buttons in series as AND, but not two in parallel both held', () => {
+    const parallel = buttonLoop('parallel');
+    const sim = new BoardSim();
+    const upTo = new Set(['loop', 'off', 'gap', 'button']);
+    sim.sync(parallel.board);
+    sim.press(parallel.one, true);
+    sim.press(parallel.two, true);
+    expect(stepOf(play(SWITCHES_AND_BUTTONS, sim, parallel.board, 0.2, upTo))).toBe('and');
+  });
+
+  it('takes two buttons in parallel with just one held as OR', () => {
+    const parallel = buttonLoop('parallel');
+    const sim = new BoardSim();
+    sim.sync(parallel.board);
+    sim.press(parallel.two, true);
+    const done = play(SWITCHES_AND_BUTTONS, sim, parallel.board, 0.2, new Set(['loop', 'off', 'gap', 'button', 'and']));
+    expect(stepOf(done)).toBeUndefined();
+  });
+});
+
+if (!switchWritten) {
+  it.todo('Lesson 2: needs your switch, in packages/engine/src/lesson-2-switches/switch.ts');
+}
+
+/** Lesson 3 needs your knob (packages/engine/src/lesson-3-knob/potentiometer.ts): until it's written, a knob isn't in the circuit. */
+const knobWritten = (() => {
+  try {
+    const c = new Circuit();
+    new Potentiometer('RV1', c.node('a'), c.node('w'), GROUND).stamp({
+      time: 0,
+      ambient: 25,
+      internal: () => GROUND,
+      conductance: () => undefined,
+      currentSource: () => undefined,
+      voltageSource: () => 0 as never,
+      junction: () => undefined,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof NotWrittenYet) return false;
+    throw error;
+  }
+})();
+
+/** A 9 V battery with a knob across it, pin 1 on + (or on −, `flipped`), and the battery's − grounded. */
+function knobAcross(flipped = false) {
+  let board = EMPTY_BOARD;
+  const battery = place(board, 'battery');
+  const knob = place(battery.board, 'knob');
+  const ground = place(knob.board, 'ground');
+  board = addWire(ground.board, { part: battery.id, pin: 'plus' }, { part: knob.id, pin: flipped ? 'b' : 'a' });
+  board = addWire(board, { part: battery.id, pin: 'minus' }, { part: knob.id, pin: flipped ? 'a' : 'b' });
+  board = addWire(board, { part: battery.id, pin: 'minus' }, { part: ground.id, pin: 'pin' });
+  return { board, battery: battery.id, knob: knob.id };
+}
+
+/** Battery + → resistor → pin 1 → wiper → LED → back to −: the knob as a dimmer. */
+function knobDimmer(ohms: number | undefined, supply = '9v') {
+  let board = EMPTY_BOARD;
+  const battery = place(board, 'battery', 0, 0, { supply });
+  const knob = place(battery.board, 'knob');
+  const led = place(knob.board, 'led');
+  board = led.board;
+  if (ohms === undefined) {
+    board = addWire(board, { part: battery.id, pin: 'plus' }, { part: knob.id, pin: 'a' });
+  } else {
+    const resistor = place(board, 'resistor', 0, 0, { ohms });
+    board = addWire(resistor.board, { part: battery.id, pin: 'plus' }, { part: resistor.id, pin: 'a' });
+    board = addWire(board, { part: resistor.id, pin: 'b' }, { part: knob.id, pin: 'a' });
+  }
+  board = addWire(board, { part: knob.id, pin: 'wiper' }, { part: led.id, pin: 'anode' });
+  board = addWire(board, { part: led.id, pin: 'cathode' }, { part: battery.id, pin: 'minus' });
+  return { board, knob: knob.id };
+}
+
+const knobStep = (done: ReadonlySet<string>) => currentStep(A_KNOB, done)?.id;
+const onWiper = (knob: string, battery: string): MeterState => ({
+  mode: 'volts',
+  leads: { red: { kind: 'pin', pin: { part: knob, pin: 'wiper' } }, black: { kind: 'pin', pin: { part: battery, pin: 'minus' } } },
+});
+const UP_TO_DIMMER = new Set(['across', 'wiper', 'bottom', 'half']);
+
+describe.runIf(knobWritten)('Lesson 3: A knob', () => {
+  it('takes a knob across the battery, then wants the meter on its wiper', () => {
+    const { board, battery, knob } = knobAcross();
+    const sim = new BoardSim();
+    expect(knobStep(play(A_KNOB, sim, board, 0.2))).toBe('wiper');
+    // On the wiper and the + side: not what's asked.
+    const wrong: MeterState = {
+      mode: 'volts',
+      leads: { ...onWiper(knob, battery).leads, black: { kind: 'pin', pin: { part: battery, pin: 'plus' } } },
+    };
+    expect(knobStep(play(A_KNOB, sim, board, 0.2, new Set(), wrong))).toBe('wiper');
+    expect(knobStep(play(A_KNOB, sim, board, 0.2, new Set(), onWiper(knob, battery)))).toBe('bottom');
+  });
+
+  it('counts “all the way down” towards whichever end is on −, then half', () => {
+    for (const flipped of [false, true]) {
+      const { board, battery, knob } = knobAcross(flipped);
+      const sim = new BoardSim();
+      const meter = onWiper(knob, battery);
+      let done = play(A_KNOB, sim, board, 0.2, new Set(), meter);
+      expect(knobStep(done)).toBe('bottom'); // halfway isn't the bottom
+      done = play(A_KNOB, sim, setProp(board, knob, 'turn', flipped ? 1 : 0), 0.2, done, meter); // towards + instead
+      expect(knobStep(done)).toBe('bottom');
+      done = play(A_KNOB, sim, setProp(board, knob, 'turn', flipped ? 0 : 1), 0.2, done, meter);
+      expect(knobStep(done)).toBe('half');
+      done = play(A_KNOB, sim, setProp(board, knob, 'turn', 0.5), 0.2, done, meter);
+      expect(knobStep(done)).toBe('dimmer');
+    }
+  });
+
+  it('finishes with an LED dimmed through the wiper, with a resistor in the loop', () => {
+    const { board } = knobDimmer(330);
+    expect(knobStep(play(A_KNOB, new BoardSim(), board, 0.2, UP_TO_DIMMER))).toBeUndefined();
+  });
+
+  it('won’t pass a dimmer with no resistor, even while the LED is lit', () => {
+    const { board } = knobDimmer(undefined);
+    expect(knobStep(play(A_KNOB, new BoardSim(), board, 0.2, UP_TO_DIMMER))).toBe('dimmer');
+  });
+
+  it('won’t pass while the knob is over its rating (9 V, 33 Ω, turned to the bright end)', () => {
+    const { board, knob } = knobDimmer(33);
+    const sim = new BoardSim();
+    expect(knobStep(play(A_KNOB, sim, setProp(board, knob, 'turn', 0), 0.2, UP_TO_DIMMER))).toBe('dimmer');
+    expect(sim.getSnapshot().parts[knob]?.over).toBe(true);
+  });
+
+  it('passes on the 3 V battery too, turned towards the bright end', () => {
+    const { board, knob } = knobDimmer(33, 'aa');
+    expect(knobStep(play(A_KNOB, new BoardSim(), setProp(board, knob, 'turn', 0.1), 0.2, UP_TO_DIMMER))).toBeUndefined();
+  });
+});
+
+if (!knobWritten) {
+  it.todo('Lesson 3: needs your knob, in packages/engine/src/lesson-3-knob/potentiometer.ts');
+}
