@@ -41,6 +41,12 @@ export const PN2222A: TransistorSpec = {
   maxWatts: 0.625,
 };
 
+/** The nodes just inside a transistor's base and collector leads, past their resistance. */
+export interface Inside {
+  readonly base: Node;
+  readonly collector: Node;
+}
+
 /** Written for you. A junction's current at `volts`, Shockley's equation, scaled by `share`, as a Curve. */
 function junctionCurve(saturationAmps: number, share = 1): Curve {
   const amps = share * saturationAmps;
@@ -79,17 +85,19 @@ function junctionCurve(saturationAmps: number, share = 1): Curve {
  * switched fully on from pulling its collector below its emitter.
  *
  * Written for you: the curves (Shockley's equation, like your LED's diode,
- * with the maker's numbers), and leads(s), which puts the small resistances
- * of the base and collector in front of the transistor proper and gives you
- * the nodes just inside them.
+ * with the maker's numbers); leads(s), which puts the small resistances of
+ * the base and collector in front of the transistor proper and gives you the
+ * nodes just inside them, `inside.base` and `inside.collector`; and stamp(s),
+ * which calls leads(s), then your first two jobs. The transistor joins the
+ * circuit once both are written.
  *
  * Your jobs, in this order
- *   1. stamp(s): the two diodes. After leads(s), one s.junction() from the
- *      inside base to the emitter (this.baseEmitter), and one from the inside
- *      base to the inside collector (this.baseCollector). That's all the base
- *      current there is. Measured like that, with nothing more, a transistor
- *      is just two diodes; it's how you test one with a meter.
- *   2. stamp(s), again: the transistor action. Two s.controlledCurrent()s,
+ *   1. diodes(s, inside): the two diodes. One s.junction() from the inside
+ *      base to the emitter (this.baseEmitter), and one from the inside base
+ *      to the inside collector (this.baseCollector). That's all the base
+ *      current there is. With nothing more, a transistor is just two diodes:
+ *      it's how you test one with a meter.
+ *   2. action(s, inside): the transistor action. Two s.controlledCurrent()s,
  *      both with this.transfer as the curve:
  *        - forwards: from the inside collector to the emitter, set by the
  *          voltage from the inside base to the emitter;
@@ -110,7 +118,7 @@ export class Transistor implements Part {
   /** The current the base's voltage sets between collector and emitter. */
   readonly transfer: Curve;
   /** The nodes just inside the base and collector leads, once leads() has run. */
-  inside = { base: GROUND, collector: GROUND };
+  inside: Inside = { base: GROUND, collector: GROUND };
 
   constructor(
     readonly name: string,
@@ -125,7 +133,7 @@ export class Transistor implements Part {
   }
 
   /** Written for you. The base and collector leads' resistances; returns the nodes inside them. */
-  leads(s: Stamp): { base: Node; collector: Node } {
+  leads(s: Stamp): Inside {
     this.inside = { base: s.internal('base'), collector: s.internal('collector') };
     s.conductance(this.base, this.inside.base, 1 / this.spec.baseOhms);
     s.conductance(this.collector, this.inside.collector, 1 / this.spec.collectorOhms);
@@ -137,9 +145,18 @@ export class Transistor implements Part {
     return r.across(this.base, this.inside.base) / this.spec.baseOhms;
   }
 
+  /** Written for you. The leads, then your two jobs. */
   stamp(s: Stamp): void {
-    // Written for you, and it stays first: the leads. Keep what it returns (const { base, collector } = …).
-    this.leads(s);
+    const inside = this.leads(s);
+    this.diodes(s, inside);
+    this.action(s, inside);
+  }
+
+  diodes(s: Stamp, inside: Inside): void {
+    throw new NotWrittenYet(this.name, FILE);
+  }
+
+  action(s: Stamp, inside: Inside): void {
     throw new NotWrittenYet(this.name, FILE);
   }
 

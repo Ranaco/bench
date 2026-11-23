@@ -172,7 +172,7 @@ function PartInspector(
         />
       )}
 
-      {reading?.transistor && reading.written && <p className="part-state">{TRANSISTOR_STATE[reading.transistor.state]}</p>}
+      {reading?.transistor?.state && reading.written && <p className="part-state">{TRANSISTOR_STATE[reading.transistor.state]}</p>}
       {reading && <Readings part={part} reading={reading} pins={props.pins} />}
 
       {reading?.burnt && (
@@ -360,8 +360,10 @@ function Readings(props: {
       if (!q) break;
       rows.push(['Into the base', amps(q.baseAmps)]);
       rows.push(['Collector to emitter', amps(q.collectorAmps)]);
-      // The gain only means something while there's base current to divide by.
-      if (q.state !== 'off') rows.push(['Collector ÷ base', `× ${(q.collectorAmps / q.baseAmps).toFixed(0)}`]);
+      // The gain only means something while there's base current to divide by, and a collector current to divide.
+      if (q.state !== 'off' && q.collectorAmps !== undefined) {
+        rows.push(['Collector ÷ base', `× ${(q.collectorAmps / q.baseAmps).toFixed(0)}`]);
+      }
       rows.push(['Across it, collector to emitter', volts(q.collectorVolts)]);
       rows.push(['Base to emitter', volts(q.baseVolts)]);
       rows.push(['Turning into heat', watts(reading.watts)]);

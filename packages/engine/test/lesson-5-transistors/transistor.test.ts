@@ -4,26 +4,33 @@
  * run a circuit wait for all three.
  */
 import { describe, expect, it } from 'vitest';
-import { Circuit, GROUND, PN2222A, Resistor, TICK, Transistor, type Node, type Readings } from '../../src/index';
+import { Circuit, GROUND, PN2222A, Resistor, TICK, Transistor, type Inside, type Node, type Readings } from '../../src/index';
 import { expectConserved, FixedCurrent, isWritten, Source, SpyStamp } from '../fixtures';
 
 const C = 1 as Node;
 const B = 2 as Node;
 const E = 3 as Node;
 
-/** What a transistor on its own stamps. */
-function stamped() {
+/** What one of the transistor's jobs stamps, on a transistor of its own: whether it runs, and what it stamped. */
+function job(run: (q: Transistor, s: SpyStamp, inside: Inside) => void) {
   const spy = new SpyStamp();
   const q = new Transistor('Q1', C, B, E);
+  const inside = q.leads(spy);
   const runs = isWritten(() => {
-    q.stamp(spy);
+    run(q, spy, inside);
   });
   return { spy, q, runs };
 }
 
-const stamp = stamped();
-const diodesWritten = stamp.runs && stamp.spy.junctions.length > 0;
-const actionWritten = stamp.runs && stamp.spy.controlled.length > 0;
+const diodes = job((q, s, inside) => {
+  q.diodes(s, inside);
+});
+const action = job((q, s, inside) => {
+  q.action(s, inside);
+});
+// Written means it runs and stamps something: an emptied body that stamps nothing doesn't count yet.
+const diodesWritten = diodes.runs && diodes.spy.junctions.length > 0;
+const actionWritten = action.runs && action.spy.controlled.length > 0;
 const currentWritten = isWritten(() => {
   new Transistor('Q1', C, B, E).current(readingsAt({}));
 });
@@ -35,18 +42,18 @@ function readingsAt(volts: Readonly<Partial<Record<number, number>>>): Readings 
   return { time: 0, dt: TICK, ambient: 25, voltage: at, across: (a, b) => at(a) - at(b), branchCurrent: () => 0 };
 }
 
-describe.runIf(diodesWritten)('Transistor.stamp, job 1: two diodes sharing the base', () => {
+describe.runIf(diodesWritten)('Transistor.diodes, job 1: two diodes sharing the base', () => {
   it('has one diode from the inside base to the emitter, and one to the inside collector', () => {
-    const { spy, q } = stamp;
+    const { spy, q } = diodes;
     expect(spy.junctions).toHaveLength(2);
     expect(spy.junctions).toContainEqual({ anode: q.inside.base, cathode: E, curve: q.baseEmitter });
     expect(spy.junctions).toContainEqual({ anode: q.inside.base, cathode: q.inside.collector, curve: q.baseCollector });
   });
 });
 
-describe.runIf(actionWritten)('Transistor.stamp, job 2: the transistor action', () => {
+describe.runIf(actionWritten)('Transistor.action, job 2: the transistor action', () => {
   it('sets a current collector to emitter by the base-emitter voltage, and back by the base-collector voltage', () => {
-    const { spy, q } = stamp;
+    const { spy, q } = action;
     const { base, collector } = q.inside;
     expect(spy.controlled).toHaveLength(2);
     expect(spy.controlled).toContainEqual({ from: collector, to: E, plus: base, minus: E, curve: q.transfer });
@@ -251,10 +258,10 @@ function readingsFrom(c: Circuit): Readings {
 }
 
 if (!diodesWritten) {
-  it.todo('Transistor.stamp, job 1: the two diodes');
+  it.todo('Transistor.diodes, job 1: the two diodes');
 }
 if (!actionWritten) {
-  it.todo('Transistor.stamp, job 2: the transistor action');
+  it.todo('Transistor.action, job 2: the transistor action');
 }
 if (!currentWritten) {
   it.todo('Transistor.current, job 3: the collector current');

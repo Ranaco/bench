@@ -102,12 +102,13 @@ export type TransistorState = 'off' | 'amplifying' | 'on';
 export interface TransistorReading {
   /** Amps into the base. */
   readonly baseAmps: number;
-  /** Amps in at the collector: the part's own current. */
-  readonly collectorAmps: number;
+  /** Amps in at the collector: the part's own current, so undefined while its current() isn't written. */
+  readonly collectorAmps: number | undefined;
   /** Volts collector to emitter, and base to emitter. */
   readonly collectorVolts: number;
   readonly baseVolts: number;
-  readonly state: TransistorState;
+  /** Undefined while there's no collector current to judge it by. */
+  readonly state: TransistorState | undefined;
 }
 
 /**
@@ -467,16 +468,23 @@ export class BoardSim {
     if (part instanceof Transistor) {
       // Its leads are given in the stub, so the nodes inside them exist once its stamp has run at all.
       const live = written && !failed;
-      const collectorAmps = live ? (amps ?? 0) : 0;
+      const collectorAmps = live ? amps : 0;
       const baseAmps = live ? c.across(part.base, part.inside.base) / part.spec.baseOhms : 0;
       const collectorVolts = failed ? 0 : c.across(part.collector, part.emitter);
       const baseVolts = failed ? 0 : c.across(part.base, part.emitter);
-      const state: TransistorState =
-        baseAmps < OFF_BASE_AMPS ? 'off' : collectorAmps < ON_SHARE * part.spec.forwardGain * baseAmps ? 'on' : 'amplifying';
+      const state: TransistorState | undefined =
+        baseAmps < OFF_BASE_AMPS
+          ? 'off'
+          : collectorAmps === undefined
+            ? undefined
+            : collectorAmps < ON_SHARE * part.spec.forwardGain * baseAmps
+              ? 'on'
+              : 'amplifying';
       const { maxCollectorAmps, maxCollectorVolts, maxWatts } = part.spec;
-      const over = collectorAmps > maxCollectorAmps || collectorVolts > maxCollectorVolts || watts > maxWatts;
-      const transistor = { baseAmps, collectorAmps, collectorVolts, baseVolts, state };
-      return { ...base, volts: collectorVolts, celsius: undefined, burnt: false, over, transistor };
+      const over = (collectorAmps ?? 0) > maxCollectorAmps || collectorVolts > maxCollectorVolts || watts > maxWatts;
+      // Out of the circuit until its stamp is written: nothing to read.
+      const transistor = live ? { baseAmps, collectorAmps, collectorVolts, baseVolts, state } : undefined;
+      return { ...base, volts: collectorVolts, celsius: undefined, burnt: false, over: live && over, transistor };
     }
     if (part instanceof Resistor) {
       const over = !part.burnt && part.temperature > part.spec.maxCelsius;

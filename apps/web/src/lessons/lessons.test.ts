@@ -623,8 +623,8 @@ describe.runIf(transistorWritten)('Lesson 5: Transistors', () => {
       last = led;
       // Amplifying means the collector carries at least 90 % of gain × base (ON_SHARE in sync.ts), up to all of it.
       if (q?.state === 'amplifying') {
-        expect(q.collectorAmps / q.baseAmps, `turn ${turn.toFixed(2)}`).toBeGreaterThanOrEqual(0.9 * PN2222A.forwardGain);
-        expect(q.collectorAmps / q.baseAmps, `turn ${turn.toFixed(2)}`).toBeLessThanOrEqual(PN2222A.forwardGain * 1.001);
+        expect((q.collectorAmps ?? 0) / q.baseAmps, `turn ${turn.toFixed(2)}`).toBeGreaterThanOrEqual(0.9 * PN2222A.forwardGain);
+        expect((q.collectorAmps ?? 0) / q.baseAmps, `turn ${turn.toFixed(2)}`).toBeLessThanOrEqual(PN2222A.forwardGain * 1.001);
       }
     }
     expect(states[0]).toBe('off');

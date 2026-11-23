@@ -439,8 +439,10 @@ function transistors({ board, snapshot }: LessonState) {
  * A lit LED carrying a transistor's collector current: in its collector's path. Within 2 %, to allow for the
  * picoamps the solver leaks to ground at every node and nothing else.
  */
-const litByCollector = (state: LessonState, collectorAmps: number) =>
-  collectorAmps >= GLOW_AMPS && liveLeds(state).some((led) => Math.abs((led.amps ?? 0) - collectorAmps) <= 0.02 * collectorAmps);
+const litByCollector = (state: LessonState, collectorAmps: number | undefined) =>
+  collectorAmps !== undefined &&
+  collectorAmps >= GLOW_AMPS &&
+  liveLeds(state).some((led) => Math.abs((led.amps ?? 0) - collectorAmps) <= 0.02 * collectorAmps);
 
 /**
  * A transistor whose base is fed from a knob's wiper: the knob across the battery, and what leaves its wiper is
@@ -485,7 +487,8 @@ export const TRANSISTORS: Lesson = {
       passes: (state) =>
         ofKind(state.board, 'button').some((b) => held(state, b)) &&
         transistors(state).some(
-          (q) => q.state === 'on' && litByCollector(state, q.collectorAmps) && q.collectorAmps >= SWITCH_GAIN * q.baseAmps,
+          (q) =>
+            q.state === 'on' && litByCollector(state, q.collectorAmps) && (q.collectorAmps ?? 0) >= SWITCH_GAIN * q.baseAmps,
         ),
     },
     {

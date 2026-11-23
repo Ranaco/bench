@@ -24,6 +24,11 @@ const MODELS: Readonly<Record<string, readonly [withArticle: string, bare: strin
 };
 
 
+/** Where a part's stamp() is written for you and calls jobs of yours, what to name instead of stamp(). */
+const STAMP_JOBS: Readonly<Record<string, string>> = {
+  transistor: 'diodes() and action(), the two jobs its stamp() calls, so the solver knows how it behaves',
+};
+
 function modelOf(file: string): readonly [string, string] {
   const base = file.split('/').at(-1)?.replace(/\.ts$/, '') ?? file;
   return MODELS[base] ?? [`a ${base}`, base];
@@ -59,7 +64,7 @@ export function YourTurn({ part, file, methods }: YourTurnProps) {
         <p>It still needs:</p>
         <ul>
           {methods.map((method) => (
-            <li key={method}>{STILL_NEEDED[method]}</li>
+            <li key={method}>{(method === 'stamp' && STAMP_JOBS[model]) || STILL_NEEDED[method]}</li>
           ))}
         </ul>
         <p className="path">In {path}</p>
