@@ -1,4 +1,5 @@
 import { KNOB_10K } from '@bench/engine';
+import { drawn, printed, scaled, type Size } from '../core/units';
 
 /**
  * The knob in 3D: a Bourns PTV09A-4 (rear mount, no bushing) with the 15 mm
@@ -12,23 +13,12 @@ import { KNOB_10K } from '@bench/engine';
  *             the outside, so the pieces inside are an illustration of how
  *             carbon knobs like this are built, not this one's measurements.
  *
- * Axes: the back of the body sits on the board at y = 0 and the shaft points
- * up +y. Looking down the shaft, +x is right and the pins are at the bottom
- * (+z), as in the datasheet's front view.
+ * Axes, while it's built: the back of the body sits on the board at y = 0, the
+ * shaft points up +y along the y axis, and looking down the shaft +x is right
+ * with the pins at the bottom (+z), as in the datasheet's front view. The
+ * finished model then moves so pin 1 is the origin (docs/3d.md §2).
  */
 
-export type SizeSource = 'printed' | 'scaled' | 'drawn';
-
-export interface Size {
-  readonly mm: number;
-  readonly source: SizeSource;
-  /** What it measures, as the drawing labels it. */
-  readonly what: string;
-}
-
-const printed = (mm: number, what: string): Size => ({ mm, source: 'printed', what });
-const scaled = (mm: number, what: string): Size => ({ mm, source: 'scaled', what });
-const drawn = (mm: number, what: string): Size => ({ mm, source: 'drawn', what });
 
 /** The outside, from the PTV09A-4 drawing and the F-type shaft table (L = 15, F = 6). */
 export const OUTSIDE = {
@@ -138,11 +128,6 @@ export function angleStep(from: number, to: number): number {
   return ((((to - from + 180) % 360) + 360) % 360) - 180;
 }
 
-/** A unit direction for an angle clockwise from the top of the front view: [x, z]. */
-export function direction(degrees: number): readonly [number, number] {
-  const r = (degrees * Math.PI) / 180;
-  return [Math.sin(r), -Math.cos(r)];
-}
 
 function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));

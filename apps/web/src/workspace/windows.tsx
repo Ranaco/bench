@@ -2,7 +2,7 @@ import { RED_LED } from '@bench/engine';
 import { lazy, Suspense, useCallback, useState, useSyncExternalStore } from 'react';
 import { BoardCanvas, type MenuTarget } from '../builder/BoardCanvas';
 import type { PlacedPart } from '../builder/board';
-import { CATALOG, supplyFor, turnOf } from '../builder/catalog';
+import { CAPACITOR_VALUES, capacitorSpec, CATALOG, supplyFor, turnOf } from '../builder/catalog';
 import { measure } from '../builder/meter';
 import { Inspector } from '../builder/Inspector';
 import { Palette } from '../builder/Palette';
@@ -19,6 +19,7 @@ import { YourTurn } from '../components/YourTurn';
 import type { Point } from '../geometry';
 import { DATASHEET_POINTS, measureLed } from '../kit';
 import { LessonPanel } from '../lessons/LessonPanel';
+import type { Subject } from '../three/Viewer3d';
 import { useShowWindow } from './show';
 
 /**
@@ -222,11 +223,19 @@ export function SpecWindow() {
   );
 }
 
-// three.js is big: it loads the first time the 3D window opens, not with the rest of Bench.
-const KnobViewer = lazy(() => import('../three/KnobViewer'));
+// three.js, react-three-fiber and drei are big: they load the first time the 3D window opens, not with the rest of
+// Bench.
+const Viewer3d = lazy(() => import('../three/Viewer3d'));
+
+/** The parts that have a 3D model so far. */
+type Modelled = 'knob' | 'capacitor';
+const MODELLED: readonly { readonly kind: Modelled; readonly name: string }[] = [
+  { kind: 'knob', name: 'Knob' },
+  { kind: 'capacitor', name: 'Capacitor' },
+];
 
 /**
- * A part in 3D, to turn, take apart and look at piece by piece. So far that's the knob: the one selected on the
+ * A part in 3D, to work, take apart and look at piece by piece (docs/3d.md): the knob or capacitor selected on the
  * board, linked to it, or one just to look at. It loads (three.js, and a WebGL context) the first time it's
  * `shown`, and stays loaded after, so going back to it finds it as you left it.
  */
@@ -239,26 +248,68 @@ export function View3dWindow({ shown = true }: { readonly shown?: boolean }) {
 function View3d() {
   const s = useSession();
   const snapshot = useSyncExternalStore(s.sim.subscribe, s.sim.getSnapshot);
-  const [looseTurn, setLooseTurn] = useState(0.5);
+  const [loose, setLoose] = useState<{ kind: Modelled | undefined; turn: number; uf: (typeof CAPACITOR_VALUES)[number] }>({
+    kind: undefined,
+    turn: 0.5,
+    uf: 1000,
+  });
   const chosen = s.board.parts.filter((p) => s.selection.parts.includes(p.id));
-  const knob = chosen.length === 1 && chosen[0]?.kind === 'knob' ? chosen[0] : undefined;
-  const other = chosen.length === 1 && !knob ? chosen[0] : undefined;
-  const reading = knob && snapshot.parts[knob.id];
-  const live =
-    reading?.written && reading.knob ? { volts: reading.knob.volts, wiperAmps: reading.knob.wiperAmps } : undefined;
+  const only = chosen.length === 1 ? chosen[0] : undefined;
+  const linked = only?.kind === 'knob' || only?.kind === 'capacitor' ? only : undefined;
+  const reading = linked && snapshot.parts[linked.id];
+  // Deselecting a part keeps showing that kind of part, rather than jumping to another.
+  if (linked && (linked.kind === 'knob' || linked.kind === 'capacitor') && loose.kind !== linked.kind) {
+    setLoose({ ...loose, kind: linked.kind });
+  }
+  // Nothing modelled selected yet: one to look at, the capacitor if the board has one, else the knob.
+  const looseKind = loose.kind ?? (s.board.parts.some((p) => p.kind === 'capacitor') ? 'capacitor' : 'knob');
+  const kind = linked?.kind === 'knob' || linked?.kind === 'capacitor' ? linked.kind : looseKind;
+
+  const subject: Subject =
+    kind === 'knob'
+      ? {
+          kind,
+          turn: linked ? turnOf(linked.props) : loose.turn,
+          onTurn: (turn) => {
+            if (linked) s.setProp(linked.id, 'turn', turn);
+            else setLoose({ ...loose, turn });
+          },
+          label: linked?.label,
+          live: reading?.written && reading.knob ? { volts: reading.knob.volts, wiperAmps: reading.knob.wiperAmps } : undefined,
+        }
+      : {
+          kind,
+          uf: linked ? capacitorValue(linked.props) : loose.uf,
+          onUf: linked
+            ? undefined
+            : (uf) => {
+                setLoose({ ...loose, uf });
+              },
+          label: linked?.label,
+          held: reading?.written && reading.capacitor ? reading.capacitor.held : undefined,
+        };
+  const note = only && !linked ? `${only.label} is selected, and it has no 3D model yet. Here’s one to look at.` : undefined;
+  const chooser = !linked && (
+    <div className="viewer-sizes" role="group" aria-label="Part">
+      {MODELLED.map((m) => (
+        <button
+          key={m.kind}
+          type="button"
+          className={m.kind === kind ? 'chip on' : 'chip'}
+          aria-pressed={m.kind === kind}
+          onClick={() => {
+            setLoose({ ...loose, kind: m.kind });
+          }}
+        >
+          {m.name}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <Suspense fallback={<p className="pane-note viewer-loading">Loading 3D…</p>}>
-      <KnobViewer
-        turn={knob ? turnOf(knob.props) : looseTurn}
-        onTurn={(turn) => {
-          if (knob) s.setProp(knob.id, 'turn', turn);
-          else setLooseTurn(turn);
-        }}
-        label={knob?.label}
-        note={other && `${other.label} is selected, and only the knob has a 3D model so far. Here’s one to look at.`}
-        live={live}
-      />
+      <Viewer3d key={kind} subject={subject} note={note} chooser={chooser} />
     </Suspense>
   );
 }
@@ -415,4 +466,10 @@ function StatusCard({ sim }: { readonly sim: BoardSim }) {
       {card.body}
     </FloatingCard>
   );
+}
+
+/** A capacitor's size from its saved setting, µF. */
+function capacitorValue(props: Readonly<Record<string, string | number>>): (typeof CAPACITOR_VALUES)[number] {
+  const microfarads = Math.round(capacitorSpec(props).farads * 1e6);
+  return CAPACITOR_VALUES.find((uf) => uf === microfarads) ?? 1000;
 }

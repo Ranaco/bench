@@ -86,6 +86,22 @@ describe('the knob in 3D', () => {
     model.dispose();
   });
 
+  it('puts pin 1 at the origin and pins 2 and 3 along +x, 2.5 mm apart (docs/3d.md §2)', () => {
+    const model = buildKnob();
+    expect(model.pins.map((p) => p.at)).toEqual([
+      [0, 0, 0],
+      [OUTSIDE.pinPitch.mm, 0, 0],
+      [2 * OUTSIDE.pinPitch.mm, 0, 0],
+    ]);
+    const pin1 = model.root.getObjectByName('pin1');
+    if (!pin1) throw new Error('no pin 1');
+    model.root.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(pin1);
+    expect((box.min.x + box.max.x) / 2).toBeCloseTo(0, 6);
+    expect((box.min.z + box.max.z) / 2).toBeCloseTo(0, 6);
+    model.dispose();
+  });
+
   it('sweeps the wiper round with the shaft', () => {
     const model = buildKnob();
     const wiper = model.root.getObjectByName('wiper');

@@ -88,12 +88,18 @@ Pop-out windows (a window in its own browser window, for a second screen) are no
   maker and part number, the document the numbers come from, and every number Bench simulates it with, each
   labelled with where it comes from (datasheet, standard, fitted to a datasheet graph, worked out, typical for the
   type, or an estimate). Read-only: the numbers are the real parts', read from the engine's own constants.
-- **3D view** (a tab beside the Board, or *See it in 3D* in the Inspector) shows the knob as the real part, to
-  scale: drag its shaft to turn it (linked to the knob selected on the board, so it's the same turn and the same
-  undo), drag anywhere else to look round it, and scroll or pinch to zoom. *Take it apart* lifts every piece clear;
-  click a piece, or pick it from the list, to see what it does and where its shape comes from, and hide it to see
-  behind it. The carbon track is tinted in its two pieces, pin 1 to the wiper and the wiper to pin 3, with their
-  resistances from `legs()`. So far only the knob has a model.
+- **3D view** (a tab beside the Board, or *See it in 3D* in the Inspector) shows the selected knob or capacitor as
+  the real part, to scale, linked to the one on the board; with neither selected, one to look at (pick which, and
+  the capacitor's size). Drag anywhere to look round it, scroll or pinch to zoom. *Take it apart* lifts every piece
+  clear; click a piece, or pick it from the list, to see what it does and where its shape comes from, and hide it to
+  see behind it.
+  - The knob: drag its shaft (or use the Turn slider, or the arrow keys) to turn it: the same turn and the same undo
+    as on the board. Its carbon track is tinted in its two pieces, pin 1 to the wiper and the wiper to pin 3, with
+    their resistances from `legs()`.
+  - The capacitor: *Unroll the foil* pulls the anode foil, the paper and the cathode foil out of the roll, drawn
+    thicker than they are and labelled so. Linked to the board, it shows the volts it's holding and the charge on its
+    plates.
+  - How every model is made (units, origin, materials, rendering, handling, physics) is in [docs/3d.md](docs/3d.md).
 - **Capacitors**: pick 220 to 2200 µF in the Inspector, which shows what it's holding, the current filling or
   emptying it, and the energy stored. The **Graph** draws the selected capacitor's voltage over the last 30 s, with
   the battery's voltage and the 63 % it reaches in resistance × capacitance seconds.
@@ -191,6 +197,7 @@ The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder th
 | Knob | Bourns PTV09 datasheet (REV. 01/25), a 9 mm carbon potentiometer: 10 kΩ ±20 % (the nominal is used); residual resistance "500 ohms or ±1 % max." (500 Ω is used, the most it allows; a real one may leave much less); linear taper B0, a straight line from 5 % to 95 % of the rotational travel; mechanical angle 280°; 0.05 W; 20 V DC. |
 | Knob in 3D | The PTV09A-4 drawing (rear mount, no bushing) with the 15 mm F-type shaft, and the datasheet's recommended board layout. Sizes printed there are used as printed: body 10.0 mm wide and 6.8 mm deep, its top 5.5 mm from the shaft's centre; shaft 6.0 mm across, its tip 15 mm up, with a 6 mm flat leaving 4.5 mm; a collar 1.1 mm deep; the metal ears 11.4 mm across, their legs 2.0 mm wide reaching 3.8 mm below the body, into slots 10.6 mm apart; pins 2.5 mm apart, 7.0 mm from the shaft's centre, 1.5 mm wide where they leave the body. The pin tips are drawn 0.8 × 0.5 mm so they fit the layout's 1.0 mm holes (the A-4 drawing doesn't print them). The rest of the outside is scaled off the drawing. The shaft's flat faces 40° clockwise from the top at full anticlockwise, and the pins in the middle, as drawn. Pins are numbered 1, 2, 3 from the left with the pins towards you, as in the board layout; the taper graph has pin 1 to pin 2 growing as the knob turns from its anticlockwise end. The inside (track, wiper, rotor, silver ends and ring) isn't on the datasheet: it's an illustration of how carbon knobs are built, and the 3D view says so. |
 | Capacitors | Nichicon UVR series datasheet (CAT.8100M), 25 V row: 220, 330, 470, 1000 and 2200 µF, ±20 % (the nominal is used). Leakage is its "after 2 minutes at rated voltage" column, 0.01 × µF × V µA, treated as a resistance across the capacitor worked out at the rated voltage (25 V ÷ that), the worst it may be: every one then empties itself with a 100 s time constant. tan δ, ripple current, case size and leads are shown on the spec sheet, not simulated. |
+| Capacitor in 3D | The UVR datasheet's row for each size (case φD × L, lead spacing P, lead diameter φd) and its radial lead drawing (leads "15 min.", the + lead "4 min." longer: the model uses those minimums; a pressure relief vent; a PET sleeve, black with white print). The inside follows Nichicon's technical notes (CAT.8101H: two aluminium foils with electrolyte-soaked paper between, wound and sealed with rubber; foils 0.02–0.11 mm, oxide about 1.3–1.5 nm per volt), drawn as an illustration with the layers exaggerated. The can's groove and the vent's score lines are drawn the way KiCad's model generator draws them; the − stripe's look is drawn too. |
 | Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. A capacitor has no series resistance (its tan δ is far too small to show at these speeds), its leak is a plain resistance though a real one's falls as it sits charged, and charged the wrong way round it only warns: the datasheet gives no numbers for that. |
 
 ### Not modelled yet
@@ -220,7 +227,8 @@ apps/web          the bench: React + Vite
   src/builder     the board: its document, selection, live circuit, editor and shared session
   src/lessons     lessons as data, with checks on the live circuit
   src/home        the main menu and the lesson list
-  src/three       parts in 3D (three.js, loaded only when the 3D view opens)
+  src/three       parts in 3D (three.js with react-three-fiber and drei, loaded only when the 3D view opens):
+                  core/ (units, materials, shapes, the model kit), stage/ (the view), one folder per part
   src/workspace   the windows and the dock that arranges them
 docs/screens      what each state looks like
 ```

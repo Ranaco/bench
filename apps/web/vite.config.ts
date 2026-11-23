@@ -10,9 +10,10 @@ export default defineConfig({
     watch: { awaitWriteFinish: { stabilityThreshold: 150, pollInterval: 25 } },
   },
   build: {
-    // three.js is about 600 kB on its own and can't be split further, but it's in a file of its own that loads only
-    // when the 3D window opens: nothing that big loads with the page.
-    chunkSizeWarningLimit: 650,
+    // three.js is the whole library, about 740 kB (react-three-fiber registers every class it has, so none can be
+    // left out), and it can't be split further. It's in a file of its own that loads only when the 3D window opens:
+    // nothing that big loads with the page.
+    chunkSizeWarningLimit: 800,
     rolldownOptions: {
       output: {
         // The big libraries each get a file of their own, cached across releases of Bench.
@@ -22,6 +23,8 @@ export default defineConfig({
             { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
             // three.js draws the 3D window, and loads only when that opens.
             { name: 'three', test: /node_modules[\\/]three[\\/]/ },
+            // react-three-fiber, drei and what they draw on: also only with the 3D view.
+            { name: 'r3f', test: /node_modules[\\/](@react-three|camera-controls|three-stdlib|three-mesh-bvh|troika-[a-z-]+|maath|zustand|its-fine|suspend-react)[\\/]/ },
           ],
         },
       },
