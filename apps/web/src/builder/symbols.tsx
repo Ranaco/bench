@@ -1,6 +1,7 @@
 import { KNOB_10K } from '@bench/engine';
 import type { PartKind } from './board';
 import { KNOB_DIAL as DIAL } from './catalog';
+import { ESP32_BODY, ESP32_PINS } from './esp32Board';
 
 /**
  * Each part's schematic symbol, drawn around its centre with its pins where
@@ -29,6 +30,15 @@ const PATHS: Readonly<Record<PartKind, readonly { readonly d: string; readonly c
   transistor: [
     { d: 'M-60,0 H-12 M-12,-20 V20 M-12,-8 L20,-28 V-60 M-12,8 L20,28 V60 M34,0 A30,30 0 1 1 -26,0 A30,30 0 1 1 34,0' },
     { d: 'M12,23 L3.1,22.2 L7.3,15.4 Z', className: 'arrowhead' },
+  ],
+  // The board's outline, and a short lead out to each pin; the pins' names are written inside by PartSymbol.
+  esp32: [
+    {
+      d: [
+        `M${String(-ESP32_BODY.halfX)},${String(-ESP32_BODY.halfY)} H${String(ESP32_BODY.halfX)} V${String(ESP32_BODY.halfY)} H${String(-ESP32_BODY.halfX)} Z`,
+        ...ESP32_PINS.map((p) => `M${String(p.x)},${String(p.y)} H${String(Math.sign(p.x) * ESP32_BODY.halfX)}`),
+      ].join(' '),
+    },
   ],
   junction: [],
 };
@@ -71,6 +81,27 @@ export function PartSymbol({ kind }: { readonly kind: PartKind }) {
         <text className="sign" x="24" y="-14">
           +
         </text>
+      )}
+      {kind === 'esp32' && (
+        <>
+          <text className="chip-title" x="0" y="-4" textAnchor="middle">
+            ESP32
+          </text>
+          <text className="chip-subtitle" x="0" y="12" textAnchor="middle">
+            DevKitC
+          </text>
+          {ESP32_PINS.map((p) => (
+            <text
+              key={p.id}
+              className="pin-name"
+              x={p.x < 0 ? -ESP32_BODY.halfX + 6 : ESP32_BODY.halfX - 6}
+              y={p.y + 3.5}
+              textAnchor={p.x < 0 ? 'start' : 'end'}
+            >
+              {p.name}
+            </text>
+          ))}
+        </>
       )}
     </>
   );
@@ -137,7 +168,7 @@ export function KnobDial({ turn }: { readonly turn: number }) {
 /** A part's symbol, shrunk to fit a palette tile. */
 export function PaletteIcon({ kind }: { readonly kind: PartKind }) {
   return (
-    <svg className="palette-icon" viewBox="-70 -70 140 140" aria-hidden="true">
+    <svg className="palette-icon" viewBox={kind === 'esp32' ? '-110 -95 220 190' : '-70 -70 140 140'} aria-hidden="true">
       <PartSymbol kind={kind} />
       {kind === 'switch' && <SwitchLever side="a" />}
       {kind === 'button' && <ButtonCap pressed={false} />}

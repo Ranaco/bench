@@ -1,5 +1,5 @@
 import { RED_LED } from '@bench/engine';
-import { lazy, Suspense, useCallback, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { BoardCanvas, type MenuTarget } from '../builder/BoardCanvas';
 import type { PlacedPart } from '../builder/board';
 import { CAPACITOR_VALUES, capacitorSpec, CATALOG, supplyFor, turnOf } from '../builder/catalog';
@@ -211,6 +211,53 @@ export function InspectorWindow() {
           show('view3d');
         }}
       />
+    </div>
+  );
+}
+
+/** Each pin a program read while it could have gone either way, once, by GPIO number. */
+const floatingPins = (reads: readonly { readonly pin: number }[]) => [...new Set(reads.map((r) => r.pin))].sort((a, b) => a - b);
+
+/**
+ * The Serial Monitor: what the ESP32's program prints with Serial.println(), newest at the bottom, and whether it's
+ * running, waiting for your pin model, or stopped (and why).
+ */
+export function SerialWindow() {
+  const { sim } = useSession();
+  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
+  const program = snapshot.program;
+  const log = useRef<HTMLPreElement>(null);
+  const serial = program?.serial;
+  // Each new line scrolls it to the bottom, where the newest is.
+  useEffect(() => {
+    const node = log.current;
+    if (node && serial !== undefined) node.scrollTop = node.scrollHeight;
+  }, [serial]);
+  if (!program) {
+    return (
+      <div className="pane pane-scroll serial-pane">
+        <p className="pane-note">Put an ESP32 on the board to run your program. What it prints with Serial.println() shows here.</p>
+      </div>
+    );
+  }
+  const floating = floatingPins(program.floating);
+  return (
+    <div className="pane serial-pane">
+      <p className={program.failure ? 'serial-status stopped' : 'serial-status'}>
+        {program.failure
+          ? `Stopped: ${program.failure}`
+          : program.runs
+            ? 'Running your program.'
+            : 'Waiting for your pin model: the program runs once gpio.ts is written.'}
+      </p>
+      {floating.length > 0 && (
+        <p className="serial-warning">
+          {`${floating.map((pin) => `GPIO${String(pin)}`).join(', ')} ${floating.length === 1 ? 'was' : 'were'} read while ${floating.length === 1 ? 'it' : 'they'} could have gone either way: a real chip could have read HIGH or LOW. Give ${floating.length === 1 ? 'it' : 'each'} a pull-up or pull-down.`}
+        </p>
+      )}
+      <pre className="serial-log" ref={log} aria-live="polite">
+        {program.serial || ' '}
+      </pre>
     </div>
   );
 }
@@ -492,6 +539,13 @@ function StatusCard({ sim }: { readonly sim: BoardSim }) {
             </p>
           ),
         }
+      : snapshot.program?.failure
+        ? {
+            eyebrow: 'Your program stopped',
+            title: 'Fix it and save',
+            tone: 'problem' as const,
+            body: <pre>{snapshot.program.failure}</pre>,
+          }
       : missing
         ? {
             eyebrow: 'Your turn',

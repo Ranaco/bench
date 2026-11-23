@@ -9,7 +9,17 @@ import {
 } from 'dockview-react';
 import { useEffect, useState, type FunctionComponent } from 'react';
 import { dockBack, restoreLayout, saveLayout, type Mode, type WindowId } from './layout';
-import { BoardWindow, GraphWindow, InspectorWindow, LessonWindow, MeterWindow, PartsWindow, SpecWindow, View3dWindow } from './windows';
+import {
+  BoardWindow,
+  GraphWindow,
+  InspectorWindow,
+  LessonWindow,
+  MeterWindow,
+  PartsWindow,
+  SerialWindow,
+  SpecWindow,
+  View3dWindow,
+} from './windows';
 
 const COMPONENTS: Readonly<Record<WindowId, FunctionComponent<IDockviewPanelProps>>> = {
   lesson: LessonWindow,
@@ -18,6 +28,7 @@ const COMPONENTS: Readonly<Record<WindowId, FunctionComponent<IDockviewPanelProp
   meter: MeterWindow,
   inspector: InspectorWindow,
   graph: GraphWindow,
+  serial: SerialWindow,
   spec: SpecWindow,
   view3d: View3dPanel,
 };

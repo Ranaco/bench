@@ -621,6 +621,43 @@ input[type='range']:active::-webkit-slider-thumb {
   background: var(--muted);
 }
 
+/* The Serial Monitor: a status line, a warning when a pin was read floating, and the log, newest at the bottom. */
+.serial-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+}
+
+.serial-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.serial-status.stopped,
+.serial-warning {
+  margin: 0;
+  font-size: 13px;
+  color: var(--hot);
+}
+
+.serial-log {
+  flex: 1 1 auto;
+  min-height: 120px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .graph-note {
   margin: 8px 0 0;
   font-size: 12px;
@@ -1054,6 +1091,37 @@ kbd {
 
 .part.capacitor.over .sign {
   fill: var(--hot);
+}
+
+/* The ESP32 board: its name in the middle, each pin's name beside its lead; dashed until your pin is written. */
+.chip-title {
+  fill: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.chip-subtitle,
+.pin-name {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.pin-name {
+  font-family: var(--mono);
+}
+
+.palette-icon .pin-name,
+.palette-icon .chip-subtitle {
+  display: none;
+}
+
+.esp32.unwritten .symbol {
+  stroke: var(--faint);
+  stroke-dasharray: 4 4;
+}
+
+.part.esp32.over .symbol {
+  stroke: var(--hot);
 }
 
 /* A transistor: its emitter's arrow is filled; dashed until your model is written; orange past its ratings. */

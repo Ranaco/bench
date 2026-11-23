@@ -106,8 +106,11 @@ export class SpyStamp implements Stamp {
     return node;
   }
 
-  conductance(): void {
-    // Not needed by the tests that use this spy.
+  /** Each conductance, with the nodes it's between. */
+  readonly conductances: { a: Node; b: Node; siemens: number }[] = [];
+
+  conductance(a: Node, b: Node, siemens: number): void {
+    this.conductances.push({ a, b, siemens });
   }
 
   currentSource(): void {

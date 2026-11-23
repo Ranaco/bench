@@ -1,6 +1,8 @@
 import {
   Battery,
   Electrolytic,
+  Esp32,
+  ESP32_GPIO,
   Ground,
   Junction,
   Led,
@@ -16,6 +18,7 @@ import {
   type Part,
 } from '@bench/engine';
 import { RESISTOR_STOPS, SUPPLIES } from '../kit';
+import { ESP32_BODY, ESP32_GPIOS, ESP32_PINS } from './esp32Board';
 import type { Point } from '../geometry';
 import type { PartKind, PlacedPart, Rotation } from './board';
 
@@ -175,6 +178,25 @@ export const CATALOG: Readonly<Record<PartKind, KindDef>> = {
     defaults: {},
     create: (label, nodes) => new Transistor(label, nodes.collector, nodes.base, nodes.emitter),
   },
+  esp32: {
+    kind: 'esp32',
+    name: 'ESP32 board',
+    tile: 'ESP32',
+    blurb: 'An ESP32-DevKitC: a microcontroller that runs your program, powered from USB',
+    pins: ESP32_PINS.map(({ id, name, x, y }) => ({ id, name, x, y })),
+    box: { x: -ESP32_BODY.halfX - 20, y: -ESP32_BODY.halfY, width: 2 * ESP32_BODY.halfX + 40, height: 2 * ESP32_BODY.halfY },
+    defaults: {},
+    create: (label, nodes) =>
+      new Esp32(
+        label,
+        nodes.v3,
+        nodes.gnd,
+        Object.fromEntries(ESP32_GPIOS.map((p) => [p.gpio, nodes[p.id]])),
+        ESP32_GPIO,
+        [nodes.gnd2],
+        new Set(ESP32_GPIOS.filter((p) => p.inputOnly).map((p) => p.gpio)),
+      ),
+  },
   ground: {
     kind: 'ground',
     name: 'Ground',
@@ -196,7 +218,7 @@ export const CATALOG: Readonly<Record<PartKind, KindDef>> = {
   },
 };
 
-export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'capacitor', 'transistor', 'ground'];
+export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'capacitor', 'transistor', 'esp32', 'ground'];
 
 /** Rotates a point about the origin by a multiple of 90°. */
 export function rotate(p: Point, rotation: Rotation): Point {

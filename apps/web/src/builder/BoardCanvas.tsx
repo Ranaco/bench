@@ -194,6 +194,8 @@ function labelLines(part: PlacedPart): string[] {
       return [part.label, `${String(Math.round(capacitorSpec(part.props).farads * 1e6))} µF`];
     case 'transistor':
       return [part.label, 'PN2222A'];
+    case 'esp32':
+      return [part.label];
     case 'led':
     case 'switch':
     case 'button':

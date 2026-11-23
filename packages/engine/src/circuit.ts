@@ -1,4 +1,4 @@
-import { solveInPlace } from './linear';
+import { SingularMatrix, solveInPlace } from './linear';
 import {
   AMBIENT_CELSIUS,
   GROUND,
@@ -253,6 +253,22 @@ export class Circuit {
     if (this.lacks(part, 'current') || this.lacks(part, 'stamp')) return undefined;
     if (this.measured.has(part)) return this.measured.get(part);
     return this.call(part, 'current', () => part.current(this.readings()));
+  }
+
+  /**
+   * Ohms between two nodes as the last solve left the circuit: how far a current pushed in at `a` and out at `b` would
+   * move the voltage between them, per amp. Batteries count as their internal resistance, diodes at the slope they
+   * settled on. Infinity before the first solve, or when nothing connects them but the solver's own leak to ground.
+   */
+  resistanceBetween(a: Node, b: Node): number {
+    const last = this.last;
+    if (!last) return Infinity;
+    try {
+      return last.assembly.resistance(last.nodeCount, a, b);
+    } catch (error) {
+      if (error instanceof SingularMatrix) return Infinity;
+      throw error;
+    }
   }
 
   /** Watts `part` is turning into heat (or light), or negative when it's supplying power. */
@@ -581,6 +597,27 @@ class Assembly implements Stamp {
 
   /** Modified nodal analysis: one equation per node, plus one per voltage source. */
   solve(nodes: number): Float64Array {
+    const { matrix, rhs, size } = this.equations(nodes);
+    return solveInPlace(matrix, rhs, size);
+  }
+
+  /**
+   * Ohms between two nodes as these stamps describe the circuit: with every source turned off (a voltage source as a
+   * short, a current source as a gap) and each curve straightened at its guess, the volts it takes to push 1 A in at
+   * `a` and out at `b`.
+   */
+  resistance(nodes: number, a: Node, b: Node): number {
+    if (a === b) return 0;
+    const { matrix, size } = this.equations(nodes);
+    const push = new Float64Array(size);
+    if (a !== GROUND) push[a - 1] += 1;
+    if (b !== GROUND) push[b - 1] -= 1;
+    const volts = solveInPlace(matrix, push, size);
+    return voltageIn(volts, a) - voltageIn(volts, b);
+  }
+
+  /** The equations for one solve: a matrix of conductances and voltage-source rows, and what's pushed into each. */
+  private equations(nodes: number): { matrix: Float64Array; rhs: Float64Array; size: number } {
     const size = nodes + this.voltageSources.length;
     const matrix = new Float64Array(size * size);
     const rhs = new Float64Array(size);
@@ -633,7 +670,7 @@ class Assembly implements Stamp {
       rhs[row] = s.volts;
     }
 
-    return solveInPlace(matrix, rhs, size);
+    return { matrix, rhs, size };
   }
 
   private currentOwner(): Part {

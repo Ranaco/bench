@@ -47,6 +47,12 @@ const TRANSISTOR_LIMITS = [
   formatSI(PN2222A.maxWatts, 'W', { trim: true }),
 ].join(' · ');
 
+/** How a pin is set up, in words. */
+const MODE_TEXT = { input: 'input', pullup: 'input, pull-up', pulldown: 'input, pull-down', output: 'output' } as const;
+
+/** What a pin reads, in words. */
+const LEVEL_TEXT = { high: 'HIGH', low: 'LOW', unknown: '? (could be either)' } as const;
+
 /** What a transistor's state means, in a few words. */
 const TRANSISTOR_STATE = {
   off: 'Off: nothing into the base, so nothing through',
@@ -208,6 +214,12 @@ function PartInspector(
           {`Over its ${formatSI(KNOB_10K.ratedWatts, 'W', { trim: true })} rating: a carbon track run this hot wears and chars. The datasheet has no heat data, so Bench only warns.`}
         </p>
       )}
+      {reading?.over && part.kind === 'esp32' && (
+        <p className="warning">
+          A pin is past what the datasheet allows: more than its typical 40 mA out or 28 mA in, or a voltage outside
+          −0.3 to 3.6 V. Bench doesn’t model the damage, so it only warns.
+        </p>
+      )}
       {reading?.over && part.kind === 'transistor' && (
         <p className="warning">
           {`Past what its datasheet allows (${TRANSISTOR_LIMITS}). Bench doesn’t model a transistor’s heat, so it only warns.`}
@@ -353,6 +365,18 @@ function Readings(props: {
       const spec = capacitorSpec(part.props);
       rows.push(['Leak across it, the worst allowed', formatSI(spec.ratedVolts / spec.leakAmps, 'Ω', { digits: 3 })]);
       rows.push(['Rated for', formatSI(cap.ratedVolts, 'V', { trim: true })]);
+      break;
+    }
+    case 'esp32': {
+      const chip = reading.chip;
+      if (!chip) break;
+      rows.push(['3V3 to GND', volts(reading.volts)]);
+      rows.push(['Out of its 3.3 V supply', amps(chip.supplyAmps)]);
+      for (const pin of Object.values(chip.pins)) {
+        const level = pin.mode === 'output' ? (pin.high ? 'driving HIGH' : 'driving LOW') : pin.level ? LEVEL_TEXT[pin.level] : '—';
+        const current = pin.mode === 'input' || pin.amps === undefined ? '' : ` · ${amps(pin.amps)}`;
+        rows.push([`GPIO${String(pin.gpio)}`, `${MODE_TEXT[pin.mode]} · ${level} · ${volts(pin.volts)}${current}`]);
+      }
       break;
     }
     case 'transistor': {

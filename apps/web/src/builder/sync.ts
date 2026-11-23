@@ -1,7 +1,12 @@
 import {
+  adcReading,
   Battery,
   Circuit,
   Electrolytic,
+  Esp32,
+  Machine,
+  NotWrittenYet,
+  TICK,
   Ground,
   JUMPER,
   Led,
@@ -11,14 +16,20 @@ import {
   Switch,
   Transistor,
   Wire,
+  type FloatingRead,
+  type GpioMode,
+  type Level,
   type Node,
   type Part,
+  type ProgramTransport,
+  type Readings,
   type Unwritten,
 } from '@bench/engine';
 import type { Board, PinRef, PlacedPart, WireDoc } from './board';
 import { flowSpeed } from '../flow';
 import { GLOW_AMPS } from '../kit';
 import { CATALOG } from './catalog';
+import { ESP32_ADC, ESP32_GPIOS } from './esp32Board';
 
 /**
  * Keeps a live circuit in step with the board. Every pin has its own node for
@@ -68,6 +79,10 @@ export interface PartReading {
   readonly capacitor: CapacitorReading | undefined;
   /** For a transistor: the current into its base, and what that lets through. */
   readonly transistor: TransistorReading | undefined;
+  /** For an ESP32 board: each GPIO pin. */
+  readonly chip: ChipReading | undefined;
+  /** For an LED: how many times it's come on since it was placed (or the board was loaded). */
+  readonly flips: number | undefined;
   /** For an LED: seconds it's been glowing without a break (at least the faintest current its datasheet plots). */
   readonly glowing: number | undefined;
   /** For a glowing LED: the most current it's carried since it started glowing, A. */
@@ -95,6 +110,47 @@ export interface CapacitorReading {
   /** How fast its voltage is changing, V/s, over the last half second: undefined until it has that much history. */
   readonly rising: number | undefined;
 }
+
+/** One GPIO pin of an ESP32, as it is right now. */
+export interface ChipPin {
+  readonly gpio: number;
+  readonly mode: GpioMode;
+  /** While it's an output: driving HIGH. */
+  readonly high: boolean;
+  /** What it reads, by your pin's read(); undefined while that isn't written. */
+  readonly level: Level | undefined;
+  /** Volts against the board's GND. */
+  readonly volts: number;
+  /** Amps out of the pin, by your pin's current(); undefined while that isn't written. */
+  readonly amps: number | undefined;
+  /** How many times it's gone between HIGH and LOW while reading (an input, with or without a pull). */
+  readonly changes: number;
+  /** For a pin analogRead() can read: the lowest and highest it's read since the board was loaded. */
+  readonly analogRange: readonly [number, number] | undefined;
+}
+
+export interface ChipReading {
+  /** By pin id ("gpio4"). */
+  readonly pins: Readonly<Record<string, ChipPin>>;
+  /** Amps out of the 3V3 supply into everything the chip powers. */
+  readonly supplyAmps: number;
+}
+
+/** The program on the board's ESP32: what it's printed, and whether it's running. */
+export interface ProgramReading {
+  /** The ESP32's part id. */
+  readonly chip: string;
+  readonly serial: string;
+  /** Why it stopped, once it has: a mistake in it, or it got stuck. */
+  readonly failure: string | undefined;
+  /** Each time it read a pin that could have gone either way. */
+  readonly floating: readonly FloatingRead[];
+  /** False while your pin model isn't written, so the program can't run yet. */
+  readonly runs: boolean;
+}
+
+/** A pin's voltage over the last little while: what the Graph draws for an ESP32. */
+export const PIN_TRACE_SECONDS = 5;
 
 /** What a transistor is doing: nothing, amplifying, or switched fully on. */
 export type TransistorState = 'off' | 'amplifying' | 'on';
@@ -169,6 +225,8 @@ export interface BoardSnapshot {
   readonly error: string | undefined;
   /** Seconds since every battery on the board stopped supplying current (unplugged, or switched off). */
   readonly unpowered: number;
+  /** The program on the board's ESP32, if there is one. */
+  readonly program: ProgramReading | undefined;
 }
 
 export const pinKey = (ref: PinRef) => `${ref.part}.${ref.pin}`;
@@ -184,6 +242,7 @@ const EMPTY: BoardSnapshot = {
   notWritten: [],
   error: undefined,
   unpowered: 0,
+  program: undefined,
 };
 
 function sameProps(a: PlacedPart['props'], b: PlacedPart['props']): boolean {
@@ -195,8 +254,29 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** How Bench runs a program: given the board's chip, where its program runs (a worker, or for tests, right here). */
+export type ProgramHost = (chip: Esp32) => ProgramTransport & { stop?(): void };
+
+/** The most circuit time a slow program can leave owing: past this, the board just runs behind real time. */
+const MAX_BACKLOG = 0.25;
+
 export class BoardSim {
   readonly circuit = new Circuit();
+  /** The ESP32 running a program, when there's one on the board and a host to run it. */
+  private machine: { readonly chip: Esp32; readonly machine: Machine; readonly transport: ReturnType<ProgramHost> } | undefined;
+  private backlog = 0;
+  private draining: Promise<void> | undefined;
+  /** Each ESP32 pin's recent voltage, by "partId.pinId". */
+  private readonly pinTraces = new Map<string, { times: number[]; volts: number[] }>();
+  /** Each ESP32 pin's last level while reading, and how many times it's changed, by "partId.pinId". */
+  private readonly pinChanges = new Map<string, { level: Level | undefined; changes: number }>();
+  /** Each analog pin's lowest and highest analogRead() value seen, by "partId.pinId". */
+  private readonly analogSeen = new Map<string, [number, number]>();
+  /** How many times each LED has come on, and whether it's on now, by part id. */
+  private readonly ledFlips = new Map<string, { on: boolean; flips: number }>();
+
+  /** `programs` runs the ESP32's program; without it, an ESP32 sits on the board doing nothing. */
+  constructor(private readonly programs?: ProgramHost) {}
   private readonly parts = new Map<string, LivePart>();
   private readonly wires = new Map<string, LiveWire>();
   private readonly flows = new Map<string, number>();
@@ -230,6 +310,10 @@ export class BoardSim {
       this.parts.delete(id);
       this.traces.delete(id);
       this.litSince.delete(id);
+      this.ledFlips.delete(id);
+      for (const map of [this.pinTraces, this.pinChanges, this.analogSeen]) {
+        for (const key of map.keys()) if (key.startsWith(`${id}.`)) map.delete(key);
+      }
     }
 
     this.buildError = undefined;
@@ -254,7 +338,50 @@ export class BoardSim {
       this.wires.set(doc.id, { doc, wire: this.circuit.add(wire) });
     }
 
+    this.syncMachine();
     this.step(0);
+  }
+
+  /** Starts the program on the board's first ESP32, or stops it when that board's gone (or replaced). */
+  private syncMachine(): void {
+    const chip = [...this.parts.values()].map((live) => live.part).find((part): part is Esp32 => part instanceof Esp32);
+    if (this.machine?.chip === chip) return;
+    this.machine?.transport.stop?.();
+    this.machine = undefined;
+    if (!chip || !this.programs) return;
+    const transport = this.programs(chip);
+    this.machine = { chip, transport, machine: new Machine(this.circuit, chip, transport, ESP32_ADC) };
+  }
+
+  /**
+   * Advances `dt` seconds, program and all, resolving once it's caught up. With no program on the board this is
+   * step(); with one, time moves a tick at a time, waiting for the program wherever it's due.
+   */
+  advance(dt: number): Promise<void> {
+    if (!this.machine || dt <= 0) {
+      this.step(dt);
+      return Promise.resolve();
+    }
+    this.backlog = Math.min(this.backlog + dt, MAX_BACKLOG);
+    this.draining ??= this.drain().finally(() => {
+      this.draining = undefined;
+    });
+    return this.draining;
+  }
+
+  private async drain(): Promise<void> {
+    while (this.backlog > 0 && this.machine) {
+      const { machine } = this.machine;
+      const dt = this.backlog;
+      this.backlog = 0;
+      try {
+        await machine.step(dt);
+        this.stepError = undefined;
+      } catch (error) {
+        this.stepError = message(error);
+      }
+      this.afterStep(dt);
+    }
   }
 
   /**
@@ -275,14 +402,27 @@ export class BoardSim {
     this.step(0);
   }
 
-  /** Advances the circuit by `dt` seconds and tells every listener. */
+  /**
+   * Advances the circuit by `dt` seconds and tells every listener. With a program on the board, time that moves goes
+   * through advance(), so the program keeps up; a step that doesn't move time (an edit, a button pressed) re-solves
+   * right away, without running it.
+   */
   step(dt: number): void {
+    if (this.machine && dt > 0) {
+      void this.advance(dt);
+      return;
+    }
     try {
       this.circuit.step(dt);
       this.stepError = undefined;
     } catch (error) {
       this.stepError = message(error);
     }
+    this.afterStep(dt);
+  }
+
+  /** After the circuit's moved on: the flow dots, the records over time, and a fresh snapshot for every listener. */
+  private afterStep(dt: number): void {
     for (const [id, live] of this.wires) {
       const amps = this.wireAmps(live);
       this.flows.set(id, (this.flows.get(id) ?? 0) + flowSpeed(amps) * dt);
@@ -342,11 +482,58 @@ export class BoardSim {
         if (amps < GLOW_AMPS) this.litSince.delete(id);
         else if (!lit) this.litSince.set(id, { since: now, peak: amps });
         else if (amps > lit.peak) this.litSince.set(id, { since: lit.since, peak: amps });
+        const flips = this.ledFlips.get(id) ?? { on: false, flips: 0 };
+        const on = amps >= GLOW_AMPS;
+        this.ledFlips.set(id, { on, flips: flips.flips + (on && !flips.on ? 1 : 0) });
       }
+      if (part instanceof Esp32 && !failed) this.trackChip(id, part, now);
       if (part instanceof Battery && !failed && Math.abs(c.currentThrough(part) ?? 0) >= IDLE_AMPS) supplying = true;
     }
     if (supplying) this.quietSince = undefined;
     else this.quietSince ??= now;
+  }
+
+  /** An ESP32's pins over time: each one's voltage, its level changes while reading, and its analog range. */
+  private trackChip(id: string, chip: Esp32, now: number): void {
+    const c = this.circuit;
+    for (const { id: pinId, gpio: number } of ESP32_GPIOS) {
+      const gpio = chip.pins.get(number);
+      if (!gpio) continue;
+      const key = `${id}.${pinId}`;
+      const volts = c.across(gpio.pin, chip.gnd);
+      let trace = this.pinTraces.get(key);
+      if (!trace) {
+        trace = { times: [], volts: [] };
+        this.pinTraces.set(key, trace);
+      }
+      if (trace.times.at(-1) === now) trace.volts[trace.volts.length - 1] = volts;
+      else {
+        trace.times.push(now);
+        trace.volts.push(volts);
+      }
+      const oldest = trace.times.findIndex((t) => t >= now - PIN_TRACE_SECONDS);
+      if (oldest > 0) {
+        trace.times.splice(0, oldest);
+        trace.volts.splice(0, oldest);
+      }
+      if (gpio.mode !== 'output') {
+        const level = readLevel(chip, number, c);
+        const seen = this.pinChanges.get(key) ?? { level: undefined, changes: 0 };
+        const changed = level !== undefined && level !== 'unknown' && seen.level !== undefined && seen.level !== 'unknown' && level !== seen.level;
+        this.pinChanges.set(key, { level, changes: seen.changes + (changed ? 1 : 0) });
+      }
+      const unit = ESP32_ADC[number];
+      if (unit !== undefined) {
+        const value = adcReading(volts, unit);
+        const range = this.analogSeen.get(key);
+        this.analogSeen.set(key, range ? [Math.min(range[0], value), Math.max(range[1], value)] : [value, value]);
+      }
+    }
+  }
+
+  /** An ESP32 pin's voltage over the last PIN_TRACE_SECONDS of circuit time, by part id and pin id. */
+  pinTrace(id: string, pinId: string): Trace | undefined {
+    return this.pinTraces.get(`${id}.${pinId}`);
   }
 
   private create(doc: PlacedPart, nodes: Readonly<Record<string, Node>>): Part | undefined {
@@ -383,8 +570,11 @@ export class BoardSim {
   private read(): BoardSnapshot {
     const c = this.circuit;
     const failed = this.stepError !== undefined;
-    const notWritten = c.notWritten;
-    const unwritten = new Set(notWritten.filter((m) => m.method === 'stamp').map((m) => m.part));
+    const machine = this.machine?.machine;
+    const programUnwritten = machine?.unwritten() ?? [];
+    // The circuit lists your pin's stamp(); the machine adds its read(), which only a program calls.
+    const notWritten = [...c.notWritten, ...programUnwritten.filter((m) => m.method === 'read')];
+    const unwritten = new Set(c.notWritten.filter((m) => m.method === 'stamp').map((m) => m.part));
 
     const pins: Record<string, number> = {};
     const parts: Record<string, PartReading> = {};
@@ -410,6 +600,16 @@ export class BoardSim {
       notWritten,
       error: this.stepError ?? this.buildError,
       unpowered: this.quietSince === undefined ? 0 : c.time - this.quietSince,
+      program:
+        this.machine && machine
+          ? {
+              chip: [...this.parts].find(([, live]) => live.part === this.machine?.chip)?.[0] ?? '',
+              serial: machine.serial,
+              failure: machine.failure === undefined ? undefined : message(machine.failure),
+              floating: machine.floating,
+              runs: programUnwritten.length === 0,
+            }
+          : undefined,
     };
   }
 
@@ -431,6 +631,8 @@ export class BoardSim {
       knob: undefined,
       capacitor: undefined,
       transistor: undefined,
+      chip: undefined,
+      flips: undefined,
       glowing: undefined,
       peakAmps: undefined,
     };
@@ -456,6 +658,7 @@ export class BoardSim {
         over,
         glowing: lit && c.time - lit.since,
         peakAmps: lit?.peak,
+        flips: this.ledFlips.get(live.doc.id)?.flips ?? 0,
       };
     }
     if (part instanceof Electrolytic) {
@@ -464,6 +667,33 @@ export class BoardSim {
       const reversed = written && part.held < -REVERSE_VOLTS;
       const capacitor = { held: written ? part.held : 0, farads, ratedVolts, reversed, rising: written ? this.rateOf(live.doc.id) : undefined };
       return { ...base, celsius: undefined, burnt: false, over: reversed || part.held > ratedVolts, capacitor };
+    }
+    if (part instanceof Esp32) {
+      const pins: Record<string, ChipPin> = {};
+      let over = false;
+      const readings = readingsOf(c);
+      for (const { id: pinId, gpio: number } of ESP32_GPIOS) {
+        const gpio = part.pins.get(number);
+        if (!gpio) continue;
+        const key = `${live.doc.id}.${pinId}`;
+        const volts = failed ? 0 : c.across(gpio.pin, part.gnd);
+        const amps = written && !failed ? attempt(() => gpio.current(readings)) : undefined;
+        const spec = gpio.spec;
+        // Past the datasheet: more than its typical drive current, or a voltage outside what a pin may be given.
+        if ((amps ?? 0) > spec.sourceAmps || (amps ?? 0) < -spec.sinkAmps || volts > spec.maxVolts || volts < -0.3) over = true;
+        pins[pinId] = {
+          gpio: number,
+          mode: gpio.mode,
+          high: gpio.high,
+          level: written && !failed ? readLevel(part, number, c) : undefined,
+          volts,
+          amps,
+          changes: this.pinChanges.get(key)?.changes ?? 0,
+          analogRange: this.analogSeen.get(key),
+        };
+      }
+      const chip = { pins, supplyAmps: failed ? 0 : (amps ?? 0) };
+      return { ...base, volts: failed ? 0 : c.across(part.vdd, part.gnd), celsius: undefined, burnt: false, over: written && over, chip };
     }
     if (part instanceof Transistor) {
       // Its leads are given in the stub, so the nodes inside them exist once its stamp has run at all.
@@ -507,6 +737,35 @@ export class BoardSim {
     for (const live of this.wires.values()) if (live.doc.a.part === id || live.doc.b.part === id) return true;
     return false;
   }
+}
+
+/** A circuit's readings as they stand, for a part's own methods to read from. */
+function readingsOf(c: Circuit): Readings {
+  return {
+    time: c.time,
+    dt: TICK,
+    ambient: c.ambient,
+    voltage: (node) => c.voltage(node),
+    across: (a, b) => c.across(a, b),
+    branchCurrent: () => 0,
+  };
+}
+
+/** What a part method gives, or undefined while it isn't written. */
+function attempt<T>(run: () => T): T | undefined {
+  try {
+    return run();
+  } catch (error) {
+    if (error instanceof NotWrittenYet) return undefined;
+    throw error;
+  }
+}
+
+/** What an ESP32 pin reads right now, by your pin's read(); undefined while that isn't written. */
+function readLevel(chip: Esp32, number: number, c: Circuit): Level | undefined {
+  const gpio = chip.pins.get(number);
+  if (!gpio) return undefined;
+  return attempt(() => gpio.read(c.across(gpio.pin, chip.gnd), c.resistanceBetween(gpio.pin, chip.gnd)));
 }
 
 // When a part model or the engine changes, start the page fresh: the live circuit holds parts built from the old code.

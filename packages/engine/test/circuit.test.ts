@@ -5,6 +5,8 @@ import {
   GROUND,
   NotWrittenYet,
   Resistor,
+  Switch,
+  TACT_SWITCH,
   TICK,
   Wire,
   type Part,
@@ -265,6 +267,52 @@ describe('Circuit, controlled currents', () => {
     const result = c.step(0);
     expect(result.converged).toBe(true);
     expectConserved(c);
+  });
+});
+
+describe('Circuit, resistance between two nodes', () => {
+  /** A 3.3 V supply between two nodes, neither of them ground: a chip's 3V3 and GND on a board with no ground symbol. */
+  function chip() {
+    const c = new Circuit();
+    const vdd = c.node('3V3');
+    const gnd = c.node('GND');
+    const pin = c.node('pin');
+    c.add(new Source('REG', vdd, gnd, 3.3));
+    return { c, vdd, gnd, pin };
+  }
+
+  it('measures a pull-up between a pin and the chip’s own ground, on a board with no ground symbol', () => {
+    const { c, vdd, gnd, pin } = chip();
+    c.add(new Resistor('RPU', pin, vdd, 45000));
+    c.step(0);
+    expect(c.resistanceBetween(pin, gnd) / 45000).toBeCloseTo(1, 6);
+    // Measured from the solver's ground instead, the whole floating board lifts with the pin: no use for a pin.
+    expect(c.resistanceBetween(pin, GROUND)).toBeGreaterThan(1e10);
+  });
+
+  it('sees an open button’s insulation, and nothing but the solver’s leak where nothing’s wired', () => {
+    const { c, vdd, gnd, pin } = chip();
+    c.add(new Switch('BTN', vdd, pin, false, TACT_SWITCH));
+    c.step(0);
+    // 100 MΩ of insulation, in parallel with the solver's 1 TΩ leaks: within about 1 %.
+    expect(c.resistanceBetween(pin, gnd) / TACT_SWITCH.openOhms).toBeCloseTo(1, 1);
+    const alone = c.node('nothing');
+    c.step(0);
+    expect(c.resistanceBetween(alone, gnd)).toBeGreaterThan(1e11);
+  });
+
+  it('counts a battery as its internal resistance, and a pair of nodes as one when they are the same', () => {
+    const c = new Circuit();
+    const plus = c.node('plus');
+    c.add(new Battery('B1', plus, GROUND, 9, 1.75));
+    c.step(0);
+    expect(c.resistanceBetween(plus, GROUND)).toBeCloseTo(1.75, 6);
+    expect(c.resistanceBetween(plus, plus)).toBe(0);
+  });
+
+  it('is infinite before anything’s been solved', () => {
+    const c = new Circuit();
+    expect(c.resistanceBetween(c.node('a'), GROUND)).toBe(Infinity);
   });
 });
 

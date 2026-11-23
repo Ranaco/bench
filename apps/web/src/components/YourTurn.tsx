@@ -12,6 +12,7 @@ const STILL_NEEDED: Readonly<Record<Method, string>> = {
   stamp: 'stamp(), so the solver knows how it behaves',
   current: 'current(), so the bench can read how much flows through it',
   settle: 'settle(), so it can heat up and burn out',
+  read: 'read(), so a program can tell HIGH from LOW',
 };
 
 /** What each part file models, to name it in a sentence: "an LED", "a switch". */
@@ -21,6 +22,7 @@ const MODELS: Readonly<Record<string, readonly [withArticle: string, bare: strin
   potentiometer: ['a knob', 'knob'],
   capacitor: ['a capacitor', 'capacitor'],
   transistor: ['a transistor', 'transistor'],
+  gpio: ['a microcontroller’s pin', 'pin'],
 };
 
 

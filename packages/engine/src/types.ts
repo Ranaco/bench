@@ -114,8 +114,8 @@ export interface Part {
   settle?(r: Readings, dt: number): void;
 }
 
-/** The three things a part does, by method name. */
-export type Method = 'stamp' | 'current' | 'settle';
+/** The things a part does, by method name: every part stamps and has a current; some settle; a pin reads. */
+export type Method = 'stamp' | 'current' | 'settle' | 'read';
 
 /** A part method that hasn't been written yet. */
 export interface Unwritten {

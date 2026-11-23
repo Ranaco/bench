@@ -6,7 +6,7 @@ import type { DockviewApi, DockviewGroupPanel, Direction, SerializedDockview } f
  */
 
 export type Mode = 'lessons' | 'build';
-export type WindowId = 'lesson' | 'board' | 'parts' | 'meter' | 'inspector' | 'graph' | 'spec' | 'view3d';
+export type WindowId = 'lesson' | 'board' | 'parts' | 'meter' | 'inspector' | 'graph' | 'serial' | 'spec' | 'view3d';
 
 export const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
   lesson: 'Lesson',
@@ -15,23 +15,24 @@ export const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
   meter: 'Meter',
   inspector: 'Inspector',
   graph: 'Graph',
+  serial: 'Serial Monitor',
   spec: 'Spec sheet',
   view3d: '3D view',
 };
 
 /** The windows each mode has, in menu order. */
 export const WINDOWS: Readonly<Record<Mode, readonly WindowId[]>> = {
-  lessons: ['lesson', 'board', 'view3d', 'parts', 'meter', 'inspector', 'graph', 'spec'],
-  build: ['board', 'view3d', 'parts', 'meter', 'inspector', 'graph', 'spec'],
+  lessons: ['lesson', 'board', 'view3d', 'parts', 'meter', 'inspector', 'graph', 'serial', 'spec'],
+  build: ['board', 'view3d', 'parts', 'meter', 'inspector', 'graph', 'serial', 'spec'],
 };
 
 /**
  * Bumped whenever the windows change, so an old saved arrangement is dropped for
  * the new default rather than misread (2 added the Meter; 3 tabbed the Graph with the Inspector; 4 gave the
  * Meter room for its guess box; 5 gave Parts a second row, for the switch and the button; 6 added the Spec sheet,
- * tabbed with the Meter; 7 added 3D, tabbed with the Board).
+ * tabbed with the Meter; 7 added 3D, tabbed with the Board; 8 added the Serial Monitor, tabbed with the Inspector).
  */
-const LAYOUT_VERSION = 7;
+const LAYOUT_VERSION = 8;
 const storageKey = (mode: Mode) => `bench.layout.${mode}`;
 
 /** Where a window goes when it's opened, by the first neighbour that's open: [neighbour, side]. */
@@ -64,6 +65,13 @@ const HOMES: Readonly<Record<WindowId, readonly (readonly [WindowId, Direction])
     ['parts', 'below'],
     ['board', 'right'],
   ],
+  // With the Inspector and the Graph: what the program says, beside what the circuit does.
+  serial: [
+    ['inspector', 'within'],
+    ['graph', 'within'],
+    ['meter', 'below'],
+    ['board', 'right'],
+  ],
   // Beside the Board: a part in 3D wants the room.
   view3d: [
     ['board', 'within'],
@@ -91,8 +99,8 @@ export function openWindow(api: DockviewApi, id: WindowId, size: { initialWidth?
   api.addPanel(home ? { ...options, position: { referencePanel: home[0], direction: home[1] } } : options);
 }
 
-/** Tall enough for two rows of part tiles under the tab bar: six parts, three to a row. */
-const PARTS_HEIGHT = 242;
+/** Tall enough for two rows of part tiles under the tab bar (a lesson's parts), or three (Build's, all ten). */
+const PARTS_HEIGHT: Readonly<Record<Mode, number>> = { lessons: 242, build: 331 };
 /** Tall enough for the meter's mode switch, its reading, what it's on, and the box to guess it in. */
 const METER_HEIGHT = 390;
 
@@ -122,10 +130,11 @@ export function defaultLayout(api: DockviewApi, mode: Mode): void {
   openWindow(api, 'meter');
   openWindow(api, 'inspector');
   openWindow(api, 'graph');
+  openWindow(api, 'serial');
   openWindow(api, 'spec');
   openWindow(api, 'view3d');
   api.getPanel('meter')?.api.setActive(); // the Spec sheet waits in the tab beside it
-  api.getPanel('parts')?.group.api.setSize({ height: PARTS_HEIGHT });
+  api.getPanel('parts')?.group.api.setSize({ height: PARTS_HEIGHT[mode] });
   api.getPanel('meter')?.group.api.setSize({ height: METER_HEIGHT });
   api.getPanel('inspector')?.api.setActive(); // the Graph waits in the tab beside it
   api.getPanel('board')?.api.setActive(); // and 3D in the tab beside the Board

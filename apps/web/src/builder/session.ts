@@ -22,6 +22,7 @@ import { afterSplits, METER_START, type MeterMode, type MeterState, type ProbeTa
 import { loadBoard, saveBoard } from './save';
 import { all, isEmpty, NOTHING, prune, type Selection } from './selection';
 import { BoardSim } from './sync';
+import { WorkerTransport } from '../program/transport';
 import { useHistory } from './useHistory';
 
 /**
@@ -160,7 +161,8 @@ const textSelected = () => (window.getSelection()?.toString() ?? '') !== '';
 export function useSessionState(storageKey: string, parts: readonly PartKind[]): Session {
   const history = useHistory(() => loadBoard(storageKey) ?? EMPTY_BOARD);
   const board = history.present;
-  const [sim] = useState(() => new BoardSim());
+  // An ESP32's program runs in a worker, so a loop that never ends can be stopped instead of freezing the page.
+  const [sim] = useState(() => new BoardSim(() => new WorkerTransport()));
   const [picked, select] = useState<Selection>(NOTHING);
   const selection = prune(board, picked); // undo can take selected things away
   const [ghost, setGhost] = useState<Session['ghost']>(undefined);

@@ -12,6 +12,13 @@ export { KNOB_10K, Potentiometer, type PotSpec } from './lesson-3-knob/potentiom
 export { Capacitor } from './lesson-4-capacitors/capacitor';
 export { Electrolytic, UVR_25V, type ElectrolyticSpec } from './parts/electrolytic';
 export { PN2222A, Transistor, type Inside, type TransistorSpec } from './lesson-5-transistors/transistor';
+export { ESP32_GPIO, Gpio, type GpioMode, type GpioSpec, type Level } from './lesson-6-microcontroller/gpio';
+export { Esp32 } from './parts/esp32';
+export { adcMillivolts, adcReading, type AdcUnit } from './program/adc';
+export { Machine, type FloatingRead, type ProgramTransport } from './program/machine';
+export { FRESH, isDue, ProgramRunner, type Program, type RunnerState, type Snapshot, type Writes } from './program/runner';
+export { ProgramMistake } from './program/arduino';
+export * as yourProgram from './lesson-6-microcontroller/program';
 export { Ground } from './parts/ground';
 export { Junction } from './parts/junction';
 export { JUMPER, Wire, type WireSpec } from './parts/wire';
