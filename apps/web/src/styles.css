@@ -1591,10 +1591,11 @@ kbd {
   color: var(--muted);
 }
 
+/* Above the labels on the model (PartStage gives them z-index 0 to 5), so a card is never written over. */
 .viewer-top,
 .viewer-foot {
   position: absolute;
-  z-index: 1;
+  z-index: 6;
 }
 
 /* The title on the left and the buttons on the right; in a narrow window the buttons go underneath. */

@@ -28,6 +28,10 @@ export const FINISHES = {
   silver: { color: [0.991, 0.985, 0.974], metalness: 1, roughness: 0.3, standIn: false, source: `${DB} "Silver"` },
   steel: { color: [0.669, 0.639, 0.598], metalness: 1, roughness: 0.3, standIn: false, source: `${DB} "Stainless Steel"` },
   brass: { color: [0.91, 0.778, 0.423], metalness: 1, roughness: 0.3, standIn: false, source: `${DB} "Brass"` },
+  // The database counts silicon with the metals (metalness 1); its roughness, like every roughness, isn't measured.
+  silicon: { color: [0.345, 0.369, 0.426], metalness: 1, roughness: 0.25, standIn: false, source: `${DB} "Silicon"` },
+  // Gold's red is above 1 in linear sRGB: as measured.
+  gold: { color: [1.059, 0.773, 0.307], metalness: 1, roughness: 0.3, standIn: false, source: `${DB} "Gold"` },
   // Tin isn't in any database; zinc is the nearest pale grey metal measured.
   tin: { color: [0.808, 0.844, 0.865], metalness: 1, roughness: 0.25, standIn: true, source: `${DB} "Zinc", for tin` },
   // Phosphor bronze isn't either; brass is the nearest measured copper alloy.
@@ -40,6 +44,9 @@ export const FINISHES = {
   carbon: { color: [0.02, 0.02, 0.02], metalness: 0, roughness: 1, standIn: true, source: `${DB} "Charcoal", for carbon` },
   paper: { color: '#cdbf9f', metalness: 0, roughness: 0.85, standIn: true, source: 'an illustration: no paper is measured' },
   phenolic: { color: '#6e4b2c', metalness: 0, roughness: 0.75, standIn: true, source: 'an illustration: no board material is measured' },
+  // N and P silicon look alike: these only tell a transistor's layers apart.
+  nSilicon: { color: '#5d7fa3', metalness: 0, roughness: 0.6, standIn: true, source: 'an illustration: N-type silicon, coloured to tell it from P' },
+  pSilicon: { color: '#b08a5e', metalness: 0, roughness: 0.6, standIn: true, source: 'an illustration: P-type silicon, coloured to tell it from N' },
 } as const satisfies Record<string, Finish>;
 
 export type FinishName = keyof typeof FINISHES;

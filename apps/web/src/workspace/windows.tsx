@@ -228,14 +228,16 @@ export function SpecWindow() {
 const Viewer3d = lazy(() => import('../three/Viewer3d'));
 
 /** The parts that have a 3D model so far. */
-type Modelled = 'knob' | 'capacitor';
+type Modelled = 'knob' | 'capacitor' | 'transistor';
 const MODELLED: readonly { readonly kind: Modelled; readonly name: string }[] = [
   { kind: 'knob', name: 'Knob' },
   { kind: 'capacitor', name: 'Capacitor' },
+  { kind: 'transistor', name: 'Transistor' },
 ];
+const isModelled = (kind: string | undefined): kind is Modelled => MODELLED.some((m) => m.kind === kind);
 
 /**
- * A part in 3D, to work, take apart and look at piece by piece (docs/3d.md): the knob or capacitor selected on the
+ * A part in 3D, to work, take apart and look at piece by piece (docs/3d.md): the modelled part selected on the
  * board, linked to it, or one just to look at. It loads (three.js, and a WebGL context) the first time it's
  * `shown`, and stays loaded after, so going back to it finds it as you left it.
  */
@@ -255,18 +257,25 @@ function View3d() {
   });
   const chosen = s.board.parts.filter((p) => s.selection.parts.includes(p.id));
   const only = chosen.length === 1 ? chosen[0] : undefined;
-  const linked = only?.kind === 'knob' || only?.kind === 'capacitor' ? only : undefined;
+  const linked = only && isModelled(only.kind) ? only : undefined;
+  const linkedKind = linked && isModelled(linked.kind) ? linked.kind : undefined;
   const reading = linked && snapshot.parts[linked.id];
   // Deselecting a part keeps showing that kind of part, rather than jumping to another.
-  if (linked && (linked.kind === 'knob' || linked.kind === 'capacitor') && loose.kind !== linked.kind) {
-    setLoose({ ...loose, kind: linked.kind });
-  }
-  // Nothing modelled selected yet: one to look at, the capacitor if the board has one, else the knob.
-  const looseKind = loose.kind ?? (s.board.parts.some((p) => p.kind === 'capacitor') ? 'capacitor' : 'knob');
-  const kind = linked?.kind === 'knob' || linked?.kind === 'capacitor' ? linked.kind : looseKind;
+  if (linkedKind && loose.kind !== linkedKind) setLoose({ ...loose, kind: linkedKind });
+  // Nothing modelled selected yet: one to look at, the newest kind the board has, else the knob.
+  const onBoard = [...MODELLED].reverse().find((m) => s.board.parts.some((p) => p.kind === m.kind));
+  const looseKind = loose.kind ?? onBoard?.kind ?? 'knob';
+  const kind = linkedKind ?? looseKind;
 
+  const transistor = reading?.written ? reading.transistor : undefined;
   const subject: Subject =
-    kind === 'knob'
+    kind === 'transistor'
+      ? {
+          kind,
+          label: linked?.label,
+          live: transistor && { baseAmps: transistor.baseAmps, collectorAmps: transistor.collectorAmps, state: transistor.state },
+        }
+      : kind === 'knob'
       ? {
           kind,
           turn: linked ? turnOf(linked.props) : loose.turn,

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { CAPACITOR_VALUES } from '../builder/catalog';
 import { CapacitorView } from './capacitor/CapacitorView';
 import { KnobView, type KnobLive } from './knob/KnobView';
+import { TransistorView, type TransistorLive } from './transistor/TransistorView';
 
 /** Which part the 3D view shows, and what the board says about it. */
 export type Subject =
@@ -18,6 +19,11 @@ export type Subject =
       readonly onUf?: (uf: (typeof CAPACITOR_VALUES)[number]) => void;
       readonly label: string | undefined;
       readonly held: number | undefined;
+    }
+  | {
+      readonly kind: 'transistor';
+      readonly label: string | undefined;
+      readonly live: TransistorLive | undefined;
     };
 
 /**
@@ -27,6 +33,9 @@ export type Subject =
 export default function Viewer3d({ subject, note, chooser }: { readonly subject: Subject; readonly note?: string; readonly chooser?: ReactNode }) {
   if (subject.kind === 'knob') {
     return <KnobView turn={subject.turn} onTurn={subject.onTurn} label={subject.label} live={subject.live} note={note} chooser={chooser} />;
+  }
+  if (subject.kind === 'transistor') {
+    return <TransistorView label={subject.label} live={subject.live} note={note} chooser={chooser} />;
   }
   return <CapacitorView uf={subject.uf} onUf={subject.onUf} label={subject.label} held={subject.held} note={note} chooser={chooser} />;
 }
