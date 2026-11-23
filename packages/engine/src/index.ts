@@ -11,6 +11,7 @@ export { SlideSwitch, type Side } from './parts/slide-switch';
 export { KNOB_10K, Potentiometer, type PotSpec } from './lesson-3-knob/potentiometer';
 export { Capacitor } from './lesson-4-capacitors/capacitor';
 export { Electrolytic, UVR_25V, type ElectrolyticSpec } from './parts/electrolytic';
+export { PN2222A, Transistor, type TransistorSpec } from './lesson-5-transistors/transistor';
 export { Ground } from './parts/ground';
 export { Junction } from './parts/junction';
 export { JUMPER, Wire, type WireSpec } from './parts/wire';

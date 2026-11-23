@@ -68,6 +68,14 @@ export interface Stamp {
   voltageSource(plus: Node, minus: Node, volts: number): Branch;
   /** A part whose current isn't proportional to its voltage. */
   junction(anode: Node, cathode: Node, curve: Curve): void;
+  /**
+   * A current from `from` to `to`, set by the voltage between two other nodes:
+   * amps = curve.current(volts at `plus` − volts at `minus`). Nothing flows
+   * between `plus` and `minus` themselves; they only steer it. It's how a
+   * transistor works: the voltage across its base and emitter sets the current
+   * from its collector to its emitter.
+   */
+  controlledCurrent(from: Node, to: Node, plus: Node, minus: Node, curve: Curve): void;
 }
 
 /** The circuit as it stands once the solver has settled. */

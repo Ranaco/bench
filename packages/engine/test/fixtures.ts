@@ -118,8 +118,19 @@ export class SpyStamp implements Stamp {
     return 0 as Branch;
   }
 
+  /** Each junction, with the nodes it's between. */
+  readonly junctions: { anode: Node; cathode: Node; curve: Curve }[] = [];
+
   junction(anode: Node, cathode: Node, curve: Curve): void {
     this.curves.push(curve);
+    this.junctions.push({ anode, cathode, curve });
+  }
+
+  /** Each controlled current: where it flows, the voltage that sets it, and how. */
+  readonly controlled: { from: Node; to: Node; plus: Node; minus: Node; curve: Curve }[] = [];
+
+  controlledCurrent(from: Node, to: Node, plus: Node, minus: Node, curve: Curve): void {
+    this.controlled.push({ from, to, plus, minus, curve });
   }
 }
 

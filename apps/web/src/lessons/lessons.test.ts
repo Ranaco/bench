@@ -91,6 +91,7 @@ const switchWritten = (() => {
       currentSource: () => undefined,
       voltageSource: () => 0 as never,
       junction: () => undefined,
+      controlledCurrent: () => undefined,
     });
     return true;
   } catch (error) {
@@ -214,6 +215,7 @@ const knobWritten = (() => {
       currentSource: () => undefined,
       voltageSource: () => 0 as never,
       junction: () => undefined,
+      controlledCurrent: () => undefined,
     });
     return true;
   } catch (error) {
@@ -333,6 +335,7 @@ const capacitorWritten = (() => {
       currentSource: () => undefined,
       voltageSource: () => 0 as never,
       junction: () => undefined,
+      controlledCurrent: () => undefined,
     });
     return true;
   } catch (error) {

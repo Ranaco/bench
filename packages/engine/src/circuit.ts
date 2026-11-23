@@ -71,7 +71,11 @@ interface VoltageSource {
   readonly owner: Part;
 }
 
-interface Junction {
+/**
+ * A current set by a curve of the voltage between two nodes, a and b: a junction's own voltage, or the one
+ * steering a controlled current. Newton's method guesses that voltage, and straightens the curve around it.
+ */
+interface Guessed {
   readonly a: Node;
   readonly b: Node;
   readonly curve: Curve;
@@ -80,8 +84,22 @@ interface Junction {
   readonly amps: number;
   readonly slope: number;
   readonly owner: Part;
-  readonly index: number;
 }
+
+/** A junction: the current flows between the same two nodes whose voltage sets it. */
+type Junction = Guessed;
+
+/** A controlled current: it flows from `from` to `to`, set by the voltage from a to b. */
+interface Controlled extends Guessed {
+  readonly from: Node;
+  readonly to: Node;
+}
+
+/**
+ * Guesses are kept per part and per pair of nodes, so a junction and a current it controls (a transistor's
+ * base-emitter junction, and the collector current it sets) always share one guess.
+ */
+const guessKey = (a: Node, b: Node) => `${String(a)}>${String(b)}`;
 
 /** A solved linear system, with the stamps that produced it. */
 interface Solved {
@@ -106,7 +124,7 @@ export class Circuit {
   private readonly nodeNames: string[] = ['ground'];
   private readonly parts: Part[] = [];
   private readonly missing = new Map<Part, Map<Method, NotWrittenYet>>();
-  private readonly junctionVolts = new Map<Part, number[]>();
+  private readonly junctionVolts = new Map<Part, Map<string, number>>();
   private readonly internals = new Map<Part, Map<string, Node>>();
   /**
    * Each part's current as the last solve left it, read before the parts
@@ -348,11 +366,11 @@ export class Circuit {
       this.last = { assembly, solution, nodeCount };
 
       unsettled.clear();
-      for (const junction of assembly.junctions) {
-        const reached = voltageIn(solution, junction.a) - voltageIn(solution, junction.b);
-        const next = limitJunction(reached, junction.volts);
-        if (next !== reached || !junctionSettled(junction, reached)) unsettled.add(junction.owner.name);
-        this.guessesFor(junction.owner)[junction.index] = next;
+      for (const guessed of [...assembly.junctions, ...assembly.controlled]) {
+        const reached = voltageIn(solution, guessed.a) - voltageIn(solution, guessed.b);
+        const next = limitJunction(reached, guessed.volts);
+        if (next !== reached || !junctionSettled(guessed, reached)) unsettled.add(guessed.owner.name);
+        this.guessesFor(guessed.owner).set(guessKey(guessed.a, guessed.b), next);
       }
       if (unsettled.size === 0) return { converged: true, iterations: iteration, unsettled: [] };
     }
@@ -366,7 +384,7 @@ export class Circuit {
       this.ambient,
       () => this.nodeNames.length - 1,
       (owner, name) => this.internalNode(owner, name),
-      (owner, index) => valueAt(this.guessesFor(owner), index),
+      (owner, a, b) => this.guessesFor(owner).get(guessKey(a, b)) ?? 0,
     );
     for (const part of this.parts) {
       if (this.lacks(part, 'stamp')) continue;
@@ -396,10 +414,10 @@ export class Circuit {
     return node;
   }
 
-  private guessesFor(part: Part): number[] {
+  private guessesFor(part: Part): Map<string, number> {
     let guesses = this.junctionVolts.get(part);
     if (!guesses) {
-      guesses = [];
+      guesses = new Map();
       this.junctionVolts.set(part, guesses);
     }
     return guesses;
@@ -433,6 +451,10 @@ export class Circuit {
       const amps = j.curve.current(volts);
       yield { a: j.a, b: j.b, amps, watts: amps * volts, owner: j.owner };
     }
+    for (const c of assembly.controlled) {
+      const amps = c.curve.current(v(c.a) - v(c.b));
+      yield { a: c.from, b: c.to, amps, watts: amps * (v(c.from) - v(c.to)), owner: c.owner };
+    }
   }
 }
 
@@ -452,7 +474,7 @@ function limitJunction(reached: number, previous: number): number {
 }
 
 /** True when the guess barely moved and the curve agrees with its straight-line estimate. */
-function junctionSettled(j: Junction, reached: number): boolean {
+function junctionSettled(j: Guessed, reached: number): boolean {
   const actual = j.curve.current(reached);
   const step = Math.abs(reached - j.volts);
   // Still, in volts; or moving so little that its current changes by less than the solver resolves. A diode
@@ -472,6 +494,7 @@ interface Mark {
   readonly sources: number;
   readonly voltageSources: number;
   readonly junctions: number;
+  readonly controlled: number;
 }
 
 /** Collects every part's stamps for one guess, then builds and solves the equations. */
@@ -480,8 +503,8 @@ class Assembly implements Stamp {
   readonly sources: CurrentSource[] = [];
   readonly voltageSources: VoltageSource[] = [];
   readonly junctions: Junction[] = [];
+  readonly controlled: Controlled[] = [];
   private owner: Part | undefined;
-  private ownerJunctions = 0;
 
   constructor(
     readonly time: number,
@@ -489,17 +512,17 @@ class Assembly implements Stamp {
     readonly ambient: number,
     private readonly nodeCount: () => number,
     private readonly allocate: (owner: Part, name: string) => Node,
-    private readonly guess: (owner: Part, index: number) => number,
+    private readonly guess: (owner: Part, a: Node, b: Node) => number,
   ) {}
 
   mark(owner: Part): Mark {
     this.owner = owner;
-    this.ownerJunctions = 0;
     return {
       conductances: this.conductances.length,
       sources: this.sources.length,
       voltageSources: this.voltageSources.length,
       junctions: this.junctions.length,
+      controlled: this.controlled.length,
     };
   }
 
@@ -508,6 +531,7 @@ class Assembly implements Stamp {
     this.sources.length = mark.sources;
     this.voltageSources.length = mark.voltageSources;
     this.junctions.length = mark.junctions;
+    this.controlled.length = mark.controlled;
   }
 
   internal(name: string): Node {
@@ -535,14 +559,24 @@ class Assembly implements Stamp {
 
   junction(anode: Node, cathode: Node, curve: Curve): void {
     this.checkNodes(anode, cathode);
+    const guessed = this.linearise(anode, cathode, curve);
+    this.junctions.push({ ...guessed, slope: Math.max(guessed.slope, GMIN) });
+  }
+
+  controlledCurrent(from: Node, to: Node, plus: Node, minus: Node, curve: Curve): void {
+    this.checkNodes(from, to, plus, minus);
+    this.controlled.push({ ...this.linearise(plus, minus, curve), from, to });
+  }
+
+  /** The curve at this part's guess for the voltage from a to b, as a straight line. */
+  private linearise(a: Node, b: Node, curve: Curve): Guessed {
     const owner = this.currentOwner();
-    const index = this.ownerJunctions++;
-    const volts = this.guess(owner, index);
+    const volts = this.guess(owner, a, b);
     const amps = curve.current(volts);
     const slope = curve.slope(volts);
     this.checkFinite('current()', amps, `at ${String(volts)} V`);
     this.checkFinite('slope()', slope, `at ${String(volts)} V`);
-    this.junctions.push({ a: anode, b: cathode, curve, volts, amps, slope: Math.max(slope, GMIN), owner, index });
+    return { a, b, curve, volts, amps, slope, owner };
   }
 
   /** Modified nodal analysis: one equation per node, plus one per voltage source. */
@@ -571,6 +605,20 @@ class Assembly implements Stamp {
       // Near its guess the curve is a straight line: a conductance plus a fixed current.
       addConductance(j.a, j.b, j.slope);
       addCurrent(j.a, j.b, j.amps - j.slope * j.volts);
+    }
+    for (const c of this.controlled) {
+      // The same straight line, but the current it gives flows between two other nodes: it leaves `from` and
+      // arrives at `to` in proportion to the voltage from a to b. That's the one entry in the matrix that isn't
+      // mirrored across its diagonal; the elimination doesn't need it to be.
+      for (const [node, sign] of [
+        [c.from, 1],
+        [c.to, -1],
+      ] as const) {
+        if (node === GROUND) continue;
+        if (c.a !== GROUND) matrix[(node - 1) * size + (c.a - 1)] += sign * c.slope;
+        if (c.b !== GROUND) matrix[(node - 1) * size + (c.b - 1)] -= sign * c.slope;
+      }
+      addCurrent(c.from, c.to, c.amps - c.slope * c.volts);
     }
     for (const [k, s] of this.voltageSources.entries()) {
       const row = nodes + k;

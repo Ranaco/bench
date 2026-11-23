@@ -9,6 +9,8 @@ import {
   Wire,
   type Part,
   type Readings,
+  type Curve,
+  type Node,
   type Stamp,
 } from '../src/index';
 import { expectConserved, FixedCurrent, Source, TestDiode, THERMAL_VOLTS } from './fixtures';
@@ -175,6 +177,94 @@ describe('Circuit, junctions', () => {
       current: () => 0,
     } satisfies Part);
     expect(() => c.step(0)).toThrow(/BROKEN\.stamp\(\) failed: current\(\) is NaN/);
+  });
+});
+
+describe('Circuit, controlled currents', () => {
+  /** A current from `from` to `to`, set by the voltage from `plus` to `minus` through `curve`. */
+  class Steered implements Part {
+    constructor(
+      readonly name: string,
+      readonly from: Node,
+      readonly to: Node,
+      readonly plus: Node,
+      readonly minus: Node,
+      readonly curve: Curve,
+    ) {}
+
+    stamp(s: Stamp): void {
+      s.controlledCurrent(this.from, this.to, this.plus, this.minus, this.curve);
+    }
+
+    current(r: Readings): number {
+      return this.curve.current(r.across(this.plus, this.minus));
+    }
+  }
+
+  it('draws a current set by a voltage elsewhere, and none from the nodes that set it', () => {
+    // 2 mA per volt, steered by 1.5 V: 3 mA drawn through 1 kΩ from 5 V leaves 2 V.
+    const c = new Circuit();
+    const supply = c.node('supply');
+    const drawn = c.node('drawn');
+    const steer = c.node('steer');
+    c.add(new Source('V1', supply, GROUND, 5));
+    c.add(new Resistor('R1', supply, drawn, 1000));
+    const control = c.add(new Source('V2', steer, GROUND, 1.5));
+    const linear: Curve = { current: (v) => 0.002 * v, slope: () => 0.002 };
+    c.add(new Steered('G1', drawn, GROUND, steer, GROUND, linear));
+    expect(c.step(0).converged).toBe(true);
+    expect(c.voltage(drawn)).toBeCloseTo(2, 8); // GMIN's picoamps to ground shift it by a few nanovolts
+    expect(Math.abs(c.currentThrough(control) ?? 1)).toBeLessThan(1e-9);
+    expectConserved(c);
+  });
+
+  it('copies a diode’s current exactly when it shares the diode’s voltage: a current mirror', () => {
+    // A junction and a controlled current with the same curve across the same two nodes share one guess, so the
+    // copy settles on the diode's own current rather than on a guess a step behind it.
+    const diode = new TestDiode('D1', 1 as Node, GROUND);
+    class Mirror implements Part {
+      readonly name = 'Q1';
+      constructor(
+        readonly anode: Node,
+        readonly out: Node,
+      ) {}
+
+      stamp(s: Stamp): void {
+        s.junction(this.anode, GROUND, diode.curve);
+        s.controlledCurrent(this.out, GROUND, this.anode, GROUND, diode.curve);
+      }
+
+      current(r: Readings): number {
+        return diode.curve.current(r.voltage(this.anode));
+      }
+    }
+    for (const amps of [1e-6, 1e-3, 0.1]) {
+      const c = new Circuit();
+      const anode = c.node('anode');
+      const supply = c.node('supply');
+      const out = c.node('out');
+      c.add(new FixedCurrent('I1', GROUND, anode, amps));
+      c.add(new Source('V1', supply, GROUND, 10));
+      const load = c.add(new Resistor('R1', supply, out, 1));
+      c.add(new Mirror(anode, out));
+      expect(c.step(0).converged, `${String(amps)} A`).toBe(true);
+      // Plus GMIN's 1e-12 S to ground at the 10 V output: 10 pA on top of the copy.
+      expect(Math.abs((c.currentThrough(load) ?? 0) - amps), `${String(amps)} A`).toBeLessThan(1e-9 * amps + 2e-11);
+      expectConserved(c);
+    }
+  });
+
+  it('settles from a cold start with the steering voltage far past the knee', () => {
+    const c = new Circuit();
+    const steer = c.node('steer');
+    const out = c.node('out');
+    c.add(new Source('V1', steer, GROUND, 0.9));
+    c.add(new Resistor('R1', steer, out, 1e6));
+    const diode = new TestDiode('D1', steer, GROUND);
+    c.add(new Steered('G1', out, GROUND, steer, GROUND, diode.curve));
+    const result = c.step(0);
+    expect(result.converged).toBe(true);
+    expectConserved(c);
   });
 });
 
