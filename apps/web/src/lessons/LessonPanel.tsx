@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { useSession } from '../builder/session';
 import { useLesson } from './progress';
 
@@ -6,7 +6,15 @@ import { useLesson } from './progress';
 export function LessonPanel() {
   const progress = useLesson();
   const session = useSession();
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   if (!progress) return null;
+  const toggle = (id: string) => {
+    setOpened((before) => {
+      const after = new Set(before);
+      if (!after.delete(id)) after.add(id);
+      return after;
+    });
+  };
   const { lesson, done, current } = progress;
   const count = lesson.steps.length;
   const fill = { '--done': done.size / count } as CSSProperties;
@@ -31,6 +39,8 @@ export function LessonPanel() {
       <ol className="steps">
         {lesson.steps.map((step, i) => {
           const state = done.has(step.id) ? 'done' : step === current ? 'current' : 'later';
+          const open = state === 'current' || opened.has(step.id);
+          const detailId = `step-${lesson.id}-${step.id}`;
           return (
             <li key={step.id} className={`step ${state}`} aria-current={state === 'current' ? 'step' : undefined}>
               <span className="step-mark" aria-hidden="true">
@@ -43,11 +53,48 @@ export function LessonPanel() {
                 )}
               </span>
               <div className="step-text">
-                <p className="step-title">
-                  {step.title}
-                  {state === 'done' && <span className="visually-hidden"> (done)</span>}
-                </p>
-                {state === 'current' && <p className="step-detail">{step.detail}</p>}
+                {state === 'current' ? (
+                  <p className="step-title">{step.title}</p>
+                ) : (
+                  // Done and later steps fold away; open one to read it again, or to go back to it.
+                  <button
+                    type="button"
+                    className="step-title step-toggle"
+                    aria-expanded={open}
+                    aria-controls={detailId}
+                    onClick={() => {
+                      toggle(step.id);
+                    }}
+                  >
+                    <span>
+                      {step.title}
+                      {state === 'done' && <span className="visually-hidden"> (done)</span>}
+                    </span>
+                    <svg className="step-chevron" viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M6 4l4 4-4 4" />
+                    </svg>
+                  </button>
+                )}
+                {open && (
+                  <div id={detailId}>
+                    <p className="step-detail">{step.detail}</p>
+                    {state === 'done' && (
+                      <>
+                        <button
+                          type="button"
+                          className="link step-back"
+                          onClick={() => {
+                            progress.backTo(step.id);
+                            toggle(step.id); // it's the current step now, open anyway; folded again once it's done
+                          }}
+                        >
+                          Go back to this step
+                        </button>
+                        <p className="step-note">Your circuit is checked again from here: anything it still does ticks straight back.</p>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </li>
           );

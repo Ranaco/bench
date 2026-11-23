@@ -5,7 +5,7 @@ import { ledLoop, place } from '../builder/fixtures';
 import { METER_START, type MeterState } from '../builder/meter';
 import { BoardSim } from '../builder/sync';
 import { A_KNOB, CAPACITORS, LIGHT_AN_LED, SWITCHES_AND_BUTTONS, type Lesson } from './lessons';
-import { advance, currentStep } from './progress';
+import { advance, backTo, currentStep } from './progress';
 
 /** Plays a lesson against a board: checks the current step each frame, as the page does. */
 function play(
@@ -485,6 +485,32 @@ describe.runIf(capacitorWritten)('Lesson 4: Capacitors', () => {
     expect(sim.getSnapshot().unpowered).toBe(0);
     play(CAPACITORS, sim, setProp(loop.board, loop.slide, 'side', 'b'), 1);
     expect(sim.getSnapshot().unpowered).toBeGreaterThan(0.9);
+  });
+});
+
+describe('Going back to a step', () => {
+  const all = new Set(CAPACITORS.steps.map((step) => step.id));
+
+  it('un-ticks that step and every one after it, and keeps the ones before', () => {
+    expect([...backTo(CAPACITORS, all, 'hold')]).toEqual(['charge', 'full']);
+    expect(capStep(backTo(CAPACITORS, all, 'hold'))).toBe('hold');
+    expect(backTo(CAPACITORS, all, 'charge').size).toBe(0);
+    expect(backTo(CAPACITORS, new Set(['charge']), 'longer')).toEqual(new Set(['charge']));
+  });
+
+  it('leaves the progress alone for a step the lesson doesn’t have', () => {
+    expect(backTo(CAPACITORS, all, 'nope')).toBe(all);
+  });
+
+  it.runIf(capacitorWritten)('checks the circuit again from there: a step it still passes ticks straight back', () => {
+    const { board } = chargeLoop({});
+    const sim = new BoardSim();
+    let done = play(CAPACITORS, sim, board, 1); // charged past half: on to "full"
+    expect(capStep(done)).toBe('full');
+    done = backTo(CAPACITORS, done, 'charge');
+    expect(capStep(done)).toBe('charge');
+    done = play(CAPACITORS, sim, board, 0.1, done); // still charged, so "charge" passes again at once
+    expect(capStep(done)).toBe('full');
   });
 });
 

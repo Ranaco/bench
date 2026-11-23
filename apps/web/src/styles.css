@@ -2188,6 +2188,67 @@ kbd {
   color: var(--muted);
 }
 
+/* A done or later step's title opens it, to read it again or go back to it. */
+.step-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.step .step-toggle:hover,
+.step .step-toggle[aria-expanded='true'] {
+  color: var(--text);
+}
+
+.step-chevron {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.6;
+  transition: transform 150ms var(--ease-out);
+}
+
+.step-toggle[aria-expanded='true'] .step-chevron {
+  transform: rotate(90deg);
+}
+
+.step-back {
+  margin-top: 8px;
+}
+
+.step-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+@media (pointer: coarse) {
+  /* 44 px targets without changing the rows' heights. */
+  .step-toggle {
+    padding-block: 12px;
+    margin-block: -12px;
+  }
+
+  .step-back {
+    padding-block: 13px;
+    margin-block: -5px -13px;
+  }
+}
+
 .lesson-done {
   padding: 14px 16px;
   border: 1px solid var(--line);
@@ -2919,6 +2980,7 @@ a.lesson-card:active {
   .card-body,
   .card-toggle svg,
   .lesson-bar span,
+  .step-chevron,
   .menu,
   .home-item,
   .lesson-card {

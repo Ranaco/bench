@@ -11,6 +11,8 @@ export interface LessonProgress {
   /** The step being worked on; undefined once the lesson is finished. */
   readonly current: Step | undefined;
   readonly restart: () => void;
+  /** Un-ticks a done step and every step after it, so it's the one being worked on again. The board stays. */
+  readonly backTo: (stepId: string) => void;
 }
 
 export const LessonContext = createContext<LessonProgress | undefined>(undefined);
@@ -56,6 +58,16 @@ export function advance(lesson: Lesson, done: ReadonlySet<string>, state: Lesson
   return step?.passes(state) ? new Set([...done, step.id]) : done;
 }
 
+/**
+ * Going back to a step: it and every step after it are to do again, the ones before stay done. The steps are
+ * checked against the circuit, so one the circuit still passes ticks again straight away.
+ */
+export function backTo(lesson: Lesson, done: ReadonlySet<string>, stepId: string): ReadonlySet<string> {
+  const index = lesson.steps.findIndex((step) => step.id === stepId);
+  if (index < 0) return done;
+  return new Set(lesson.steps.slice(0, index).flatMap((step) => (done.has(step.id) ? [step.id] : [])));
+}
+
 export function useLessonProgress(
   lesson: Lesson | undefined,
   sim: BoardSim,
@@ -81,15 +93,21 @@ export function useLessonProgress(
   }, [lesson, sim]);
 
   if (!lesson) return undefined;
+  // The ref first, so the next sim update checks from here rather than writing the old progress back.
+  const setTo = (next: ReadonlySet<string>) => {
+    latest.current = { ...latest.current, done: next };
+    save(lesson, next);
+    setDone(next);
+  };
   return {
     lesson,
     done,
     current: currentStep(lesson, done),
     restart: () => {
-      const fresh = new Set<string>();
-      latest.current = { ...latest.current, done: fresh };
-      save(lesson, fresh);
-      setDone(fresh);
+      setTo(new Set());
+    },
+    backTo: (stepId) => {
+      setTo(backTo(lesson, latest.current.done, stepId));
     },
   };
 }
