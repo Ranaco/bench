@@ -227,7 +227,7 @@ const UVR_PART_NUMBERS: Readonly<Record<(typeof CAPACITOR_VALUES)[number], strin
 };
 
 function capacitorSheet(spec: ElectrolyticSpec, partNumber: string): SpecSheet {
-  const microfarads = spec.farads * 1e6;
+  const microfarads = Math.round(spec.farads * 1e6); // 0.0022 × 1e6 is 2199.9999999999995 in floating point
   const leakOhms = spec.ratedVolts / spec.leakAmps;
   const kilohms = new Intl.NumberFormat('en-US', { maximumSignificantDigits: 3 }).format(leakOhms / 1000);
   return {

@@ -114,7 +114,7 @@ export function buildCapacitor(spec: ElectrolyticSpec): CapacitorModel {
   add('vent', box(0.22, 0.03, 1.2 * bare, 0, L + 0.015, 0));
 
   // The sleeve: printed round its side, following the groove in, wrapped over the top edge and under the base.
-  const print = k.own(sleevePrint(spec.farads * 1e6, spec.ratedVolts) ?? new THREE.Texture());
+  const print = k.own(sleevePrint(Math.round(spec.farads * 1e6), spec.ratedVolts) ?? new THREE.Texture());
   if (print.image) {
     materials.sleeve.map = print;
     materials.sleeve.color.set('#ffffff');

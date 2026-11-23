@@ -1,6 +1,4 @@
-import { NotWrittenYet, type Node, type Part, type Readings, type Stamp } from '../types';
-
-const FILE = 'packages/engine/src/lesson-4-capacitors/capacitor.ts';
+import { type Node, type Part, type Readings, type Stamp } from '../types';
 
 /**
  * Capacitor: your fourth part, and the first one that remembers.
@@ -59,14 +57,17 @@ export class Capacitor implements Part {
   ) {}
 
   settle(r: Readings, dt: number): void {
-    throw new NotWrittenYet(this.name, FILE);
+    this.held = r.across(this.a, this.b);
   }
 
   current(r: Readings): number {
-    throw new NotWrittenYet(this.name, FILE);
+    const now = r.across(this.a, this.b);
+    return (this.farads * (now - this.held)) / r.dt // This means I = C(dv/dt)
   }
 
   stamp(s: Stamp): void {
-    throw new NotWrittenYet(this.name, FILE);
+    const siemens = this.farads / s.dt;
+    s.conductance(this.a, this.b, siemens);
+    s.currentSource(this.b, this.a, siemens * this.held)
   }
 }

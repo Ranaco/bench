@@ -190,7 +190,8 @@ function labelLines(part: PlacedPart): string[] {
     case 'knob':
       return [part.label, '10 kΩ'];
     case 'capacitor':
-      return [part.label, `${String(capacitorSpec(part.props).farads * 1e6)} µF`];
+      // Rounded: 0.0022 F × 1e6 is 2199.9999999999995 in floating point.
+      return [part.label, `${String(Math.round(capacitorSpec(part.props).farads * 1e6))} µF`];
     case 'led':
     case 'switch':
     case 'button':

@@ -37,6 +37,9 @@ const rating = (spec: SwitchSpec) =>
   `${formatSI(spec.ratedAmps, 'A', { trim: true })} at ${formatSI(spec.ratedVolts, 'V', { trim: true })} DC`;
 
 /** A wire's resistance at room temperature, from its length, copper and its size: what the circuit uses for it. */
+/** The parts the 3D view can show, linked to the one selected. */
+const IN_3D: ReadonlySet<PlacedPart['kind']> = new Set(['knob', 'capacitor']);
+
 const wireOhms = (wire: WireDoc) => conductorOhms(JUMPER.conductor, wire.metres, awgArea(JUMPER.gauge), AMBIENT_CELSIUS);
 
 const amps = (value: number | undefined) => (value === undefined ? '—' : formatSI(value, 'A', { floor: 1e-9 }));
@@ -196,14 +199,14 @@ function PartInspector(
         </p>
       )}
 
-      {(sheetFor(part.kind, part.props) !== undefined || part.kind === 'knob') && (
+      {(sheetFor(part.kind, part.props) !== undefined || IN_3D.has(part.kind)) && (
         <div className="see-also">
           {sheetFor(part.kind, part.props) && (
             <button type="button" className="ghost spec-link" onClick={props.onShowSpec}>
               Spec sheet
             </button>
           )}
-          {part.kind === 'knob' && (
+          {IN_3D.has(part.kind) && (
             <button type="button" className="ghost spec-link" onClick={props.onShow3d}>
               See it in 3D
             </button>
