@@ -1,4 +1,4 @@
-import { RED_LED } from '@bench/engine';
+import { ESP32_GPIO, RED_LED } from '@bench/engine';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { BoardCanvas, type MenuTarget } from '../builder/BoardCanvas';
 import type { PlacedPart } from '../builder/board';
@@ -8,7 +8,9 @@ import { Inspector } from '../builder/Inspector';
 import { Palette } from '../builder/Palette';
 import { SpecSheetPanel } from '../builder/SpecSheet';
 import { useSession, type Session } from '../builder/session';
-import { TRACE_SECONDS, type BoardSim } from '../builder/sync';
+import { PIN_TRACE_SECONDS, TRACE_SECONDS, type BoardSim } from '../builder/sync';
+import { ESP32_GPIOS } from '../builder/esp32Board';
+import { PinGraph } from '../components/PinGraph';
 import { ChargeGraph } from '../components/ChargeGraph';
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu';
 import { FloatingCard } from '../components/FloatingCard';
@@ -379,13 +381,15 @@ function View3d() {
 export function GraphWindow() {
   const { board, sim, selection } = useSession();
   const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
-  const graphed = board.parts.filter((p) => p.kind === 'capacitor' || p.kind === 'led' || p.kind === 'transistor');
+  const graphed = board.parts.filter((p) => p.kind === 'capacitor' || p.kind === 'led' || p.kind === 'transistor' || p.kind === 'esp32');
   const chosen =
     graphed.find((p) => selection.parts.includes(p.id)) ??
+    graphed.find((p) => p.kind === 'esp32') ??
     graphed.find((p) => p.kind === 'transistor') ??
     graphed.find((p) => p.kind === 'capacitor') ??
     graphed.find((p) => p.kind === 'led');
   if (chosen?.kind === 'transistor') return <TransistorPane key={chosen.id} chosen={chosen} />;
+  if (chosen?.kind === 'esp32') return <PinPane chosen={chosen} />;
   if (chosen?.kind === 'capacitor') {
     const trace = sim.trace(chosen.id);
     const batteries = board.parts.filter((p) => p.kind === 'battery').map((p) => supplyFor(p.props.supply).volts);
@@ -413,6 +417,58 @@ export function GraphWindow() {
     );
   }
   return <LedGraph chosen={chosen} />;
+}
+
+/** The ESP32's wired pins: each one's voltage over the last few seconds, against the lines it's read by. */
+function PinPane({ chosen }: { readonly chosen: PlacedPart }) {
+  const { sim, board } = useSession();
+  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
+  const pins = snapshot.parts[chosen.id]?.chip?.pins;
+  const wired = ESP32_GPIOS.filter((p) =>
+    board.wires.some((w) => (w.a.part === chosen.id && w.a.pin === p.id) || (w.b.part === chosen.id && w.b.pin === p.id)),
+  );
+  const rows = wired.map((p) => {
+    const trace = sim.pinTrace(chosen.id, p.id);
+    const pin = pins?.[p.id];
+    const now = !pin
+      ? '—'
+      : pin.mode === 'output'
+        ? pin.high
+          ? 'driving HIGH'
+          : 'driving LOW'
+        : pin.level === 'high'
+          ? 'HIGH'
+          : pin.level === 'low'
+            ? 'LOW'
+            : pin.level === 'unknown'
+              ? '?'
+              : '—';
+    const analog = pin?.analog === undefined ? '' : ` · ${String(pin.analog)}`;
+    return { name: p.name, times: trace?.times ?? [], volts: trace?.volts ?? [], now: `${now}${analog}` };
+  });
+  return (
+    <div className="pane pane-scroll graph-pane">
+      <p className="pane-note">
+        {rows.length === 0
+          ? `Wire something to one of ${chosen.label}’s GPIO pins to graph it.`
+          : `${chosen.label}: each wired pin’s voltage over the last ${String(PIN_TRACE_SECONDS)} seconds. Click a capacitor, an LED or a transistor to graph it instead.`}
+      </p>
+      {rows.length > 0 && (
+        <PinGraph
+          rows={rows}
+          now={snapshot.time}
+          span={PIN_TRACE_SECONDS}
+          supply={ESP32_GPIO.supplyVolts}
+          highAbove={ESP32_GPIO.highAbove}
+          lowBelow={ESP32_GPIO.lowBelow}
+        />
+      )}
+      <p className="graph-note">
+        The datasheet promises HIGH at or above 0.75 × 3.3 V and LOW at or below 0.25 × 3.3 V. In the shaded band between,
+        a pin could read either: it’s where a floating pin wanders.
+      </p>
+    </div>
+  );
 }
 
 /** How many places a transistor's trail remembers. */

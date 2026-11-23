@@ -372,11 +372,20 @@ function Readings(props: {
       if (!chip) break;
       rows.push(['3V3 to GND', volts(reading.volts)]);
       rows.push(['Out of its 3.3 V supply', amps(chip.supplyAmps)]);
+      const idle: string[] = [];
       for (const pin of Object.values(chip.pins)) {
+        // A plain input with nothing holding it: not worth a row of its own.
+        if (pin.mode === 'input' && pin.floating) {
+          idle.push(`GPIO${String(pin.gpio)}`);
+          continue;
+        }
         const level = pin.mode === 'output' ? (pin.high ? 'driving HIGH' : 'driving LOW') : pin.level ? LEVEL_TEXT[pin.level] : '—';
+        const at = pin.floating ? 'floating' : volts(pin.volts);
+        const analog = pin.analog === undefined ? '' : ` · analogRead ${String(pin.analog)}`;
         const current = pin.mode === 'input' || pin.amps === undefined ? '' : ` · ${amps(pin.amps)}`;
-        rows.push([`GPIO${String(pin.gpio)}`, `${MODE_TEXT[pin.mode]} · ${level} · ${volts(pin.volts)}${current}`]);
+        rows.push([`GPIO${String(pin.gpio)}`, `${MODE_TEXT[pin.mode]} · ${level} · ${at}${analog}${current}`]);
       }
+      if (idle.length > 0) rows.push(['Not connected', idle.join(', ')]);
       break;
     }
     case 'transistor': {

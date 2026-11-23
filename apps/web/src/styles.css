@@ -658,6 +658,23 @@ input[type='range']:active::-webkit-slider-thumb {
   white-space: pre-wrap;
 }
 
+/* The ESP32's pins: a strip each, the band where a pin could read either way shaded. */
+.pin-band {
+  fill: var(--fill);
+}
+
+.pin-now {
+  fill: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.key-band::before {
+  height: 8px;
+  border: 0;
+  background: var(--fill-raised);
+}
+
 .graph-note {
   margin: 8px 0 0;
   font-size: 12px;

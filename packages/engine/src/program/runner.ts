@@ -29,15 +29,18 @@ export interface Writes {
   readonly printed: string;
   /** Pins it read while they could have read either way. */
   readonly floating: number[];
+  /** Pins it read with analogRead(). */
+  readonly analog: number[];
 }
 
 /** A Host that reads from a snapshot and writes down what the program does. */
 class SnapshotHost implements Host {
-  readonly writes: { modes: [number, PinMode][]; levels: [number, boolean][]; printed: string; floating: number[] } = {
+  readonly writes: { modes: [number, PinMode][]; levels: [number, boolean][]; printed: string; floating: number[]; analog: number[] } = {
     modes: [],
     levels: [],
     printed: '',
     floating: [],
+    analog: [],
   };
 
   constructor(private readonly snapshot: Snapshot) {}
@@ -79,6 +82,7 @@ class SnapshotHost implements Host {
     this.pin(pin);
     const value = this.snapshot.analog[pin];
     if (value === undefined) throw new ProgramMistake(`GPIO${String(pin)} can’t be read with analogRead() on this board.`);
+    this.writes.analog.push(pin);
     return value;
   }
 

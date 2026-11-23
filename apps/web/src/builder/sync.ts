@@ -127,6 +127,13 @@ export interface ChipPin {
   readonly changes: number;
   /** For a pin analogRead() can read: the lowest and highest it's read since the board was loaded. */
   readonly analogRange: readonly [number, number] | undefined;
+  /** For a pin analogRead() can read: what it would give right now. */
+  readonly analog: number | undefined;
+  /**
+   * Nothing holds it: its leak (up to 50 nA, either way) through the resistance it sees could move it further than the
+   * whole supply. Its voltage then means nothing, so it isn't shown.
+   */
+  readonly floating: boolean;
 }
 
 export interface ChipReading {
@@ -147,6 +154,8 @@ export interface ProgramReading {
   readonly floating: readonly FloatingRead[];
   /** False while your pin model isn't written, so the program can't run yet. */
   readonly runs: boolean;
+  /** The pins it has read with analogRead(). */
+  readonly analogPins: ReadonlySet<number>;
 }
 
 /** A pin's voltage over the last little while: what the Graph draws for an ESP32. */
@@ -608,6 +617,7 @@ export class BoardSim {
               failure: machine.failure === undefined ? undefined : message(machine.failure),
               floating: machine.floating,
               runs: programUnwritten.length === 0,
+              analogPins: machine.analogPins,
             }
           : undefined,
     };
@@ -679,6 +689,8 @@ export class BoardSim {
         const volts = failed ? 0 : c.across(gpio.pin, part.gnd);
         const amps = written && !failed ? attempt(() => gpio.current(readings)) : undefined;
         const spec = gpio.spec;
+        const floating = failed || spec.leakAmps * c.resistanceBetween(gpio.pin, part.gnd) > spec.supplyVolts;
+        const unit = ESP32_ADC[number];
         // Past the datasheet: more than its typical drive current, or a voltage outside what a pin may be given.
         if ((amps ?? 0) > spec.sourceAmps || (amps ?? 0) < -spec.sinkAmps || volts > spec.maxVolts || volts < -0.3) over = true;
         pins[pinId] = {
@@ -690,6 +702,9 @@ export class BoardSim {
           amps,
           changes: this.pinChanges.get(key)?.changes ?? 0,
           analogRange: this.analogSeen.get(key),
+          // Shown where the program reads it as a number; a pin it reads as HIGH or LOW needn't say.
+          analog: unit === undefined || floating || !this.machine?.machine.analogPins.has(number) ? undefined : adcReading(volts, unit),
+          floating,
         };
       }
       const chip = { pins, supplyAmps: failed ? 0 : (amps ?? 0) };

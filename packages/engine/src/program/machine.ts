@@ -27,6 +27,8 @@ export class Machine {
   serial = '';
   /** Each read of a pin that could have gone either way. */
   readonly floating: FloatingRead[] = [];
+  /** The pins the program has read with analogRead(). */
+  readonly analogPins = new Set<number>();
   /** What stopped the program, once something has: a mistake, a crash. It doesn't run again. */
   failure: unknown;
   private pending = 0;
@@ -97,5 +99,6 @@ export class Machine {
     // The last 20,000 characters: enough to scroll back through, without growing forever.
     this.serial = (this.serial + writes.printed).slice(-20000);
     for (const pin of writes.floating) this.floating.push({ millis, pin });
+    for (const pin of writes.analog) this.analogPins.add(pin);
   }
 }

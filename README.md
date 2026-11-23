@@ -35,8 +35,8 @@ one after saving a part model, comes back to the same place.
 
 ## The workspace
 
-Everything is a window: **Board**, **Parts**, **Meter**, **Inspector**, **Graph** (a tab beside the Inspector),
-and in Lessons, **Lesson**.
+Everything is a window: **Board**, **Parts**, **Meter**, **Inspector**, **Graph** and **Serial Monitor** (tabs
+beside the Inspector), and in Lessons, **Lesson**.
 
 - Drag a tab to move a window: into another window's tab bar, or to any edge to split. Drag the gaps between
   windows to resize them.
@@ -114,6 +114,13 @@ Pop-out windows (a window in its own browser window, for a second screen) are no
   the base (a diode's climb), and against the current into it (a straight line, 255.9 times steeper). A dot shows
   where it is now, with a trail of where it's been: turn the knob and it rides the line, then goes flat when it's
   fully on.
+- **The ESP32** (an ESP32-DevKitC, a handful of its pins: 3V3, GND, GPIO 2, 4, 5, 18, 19, 21, 32, 33 and 34) runs
+  your program, `program.ts`, as soon as your pin model is written. What it prints goes to the **Serial Monitor**,
+  with a warning whenever it read a pin that could have gone either way. The Inspector shows each pin's mode, what it
+  reads (HIGH, LOW or "?"), its voltage and current; an unconnected pin says so rather than show a voltage that means
+  nothing. The **Graph** draws each wired pin's voltage over the last 5 s, with the band between the datasheet's HIGH
+  and LOW lines shaded: where a floating pin wanders. If the program stops (a mistake, a crash, or a loop that never
+  waits, which a 3 s watchdog catches), a card says why.
 
 Every wire is a real 10 cm jumper with its own resistance and its own current, so a hand-built loop reads a hair
 under the same loop with perfect connections: about 1 µA less at 330 Ω, which is what three jumpers' 16 mΩ
@@ -159,6 +166,8 @@ packages/engine/src/
   lesson-4-capacitors/capacitor.ts  your capacitor: the first part that remembers (its charge, tick to tick)
   lesson-5-transistors/transistor.ts  your transistor: two diodes, and a current one of them steers (its curves
                                   and leads are written for you)
+  lesson-6-microcontroller/gpio.ts      your microcontroller pin: input, pull-up, pull-down or output, and what it
+                                        reads; program.ts beside it is your program
   parts/                          built in: battery, resistor, wire, ground, junction, supply, slide switch,
                                   electrolytic (your capacitor, plus the leak its datasheet allows)
 ```
@@ -194,6 +203,16 @@ The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder th
   isn't mirrored across the diagonal, which elimination with pivoting doesn't mind. Guesses are kept per part and
   per pair of nodes, so a junction and the current it steers always share one (a test checks a current mirror
   copies a diode's current to 1 part in 10⁹).
+- **Resistance between two nodes.** `resistanceBetween(a, b)` solves the last solve's equations once more, every
+  source off, with 1 A pushed in at one node and out at the other: the ohms the rest of the circuit presents
+  between them. A microcontroller pin's leak check measures pin to the chip's own GND, never to the solver's ground:
+  on a board with no ground symbol, every node hangs off the solver's 1 TΩ leaks.
+- **Programs.** A program runs on the circuit's clock: each 1 ms tick the circuit is solved, then the program runs if
+  it's due, against what the pins read at that moment, and what it writes reaches the circuit on the next tick. It
+  only ever sees a snapshot and gives back writes, plain data, so it runs in a worker (where a loop that never
+  waits can be stopped) and, for the tests, on Bench's own thread, with the same runner. A loop() that waited in
+  delay() goes straight round, as on a real chip; one that didn't runs once a millisecond. A missing `await` is
+  caught twice: lint flags it as you type, and the runner names it if it runs.
 - **Parts.** A part describes itself with conductances, current and voltage sources, junctions, controlled
   currents and private internal nodes. `ThermalMass` turns power into temperature exactly, so heat and burn-out follow real thermal resistance.
 - **Checks.** `circuit.audit()` measures Kirchhoff's current law at every node and the power balance of the whole
@@ -218,7 +237,9 @@ The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder th
 | Capacitor in 3D | The UVR datasheet's row for each size (case φD × L, lead spacing P, lead diameter φd) and its radial lead drawing (leads "15 min.", the + lead "4 min." longer: the model uses those minimums; a pressure relief vent; a PET sleeve, black with white print). The inside follows Nichicon's technical notes (CAT.8101H: two aluminium foils with electrolyte-soaked paper between, wound and sealed with rubber; foils 0.02–0.11 mm, oxide about 1.3–1.5 nm per volt), drawn as an illustration with the layers exaggerated. The can's groove and the vent's score lines are drawn the way KiCad's model generator draws them; the − stripe's look is drawn too. |
 | Transistor | PN2222A (TO-92, legs E B C), sold by onsemi now as the KSP2222A. The model is the SPICE model printed on Fairchild's PN2222A datasheet (Rev. A1, August 2004), cut to its DC core: Is 14.34 fA, Bf 255.9, Br 6.092, Rb 10 Ω, Rc 1 Ω (Ebers–Moll, both junctions' emission at 1). Limits from onsemi's KSP2222A datasheet (Rev. 2, October 2023): IC 600 mA (Fairchild's 2014 PN2222A sheet says 1.0 A; the newer, lower figure is used), VCEO 40 V, PD 625 mW. The tests hold the model to that sheet: hFE at each of its test currents, VCE(sat) at most 0.3 V and VBE(on) 0.6–1.2 V at 150 mA (the model: 0.18 V and 0.94 V), 1.0 V and 2.0 V at 500 mA (0.53 V and 1.32 V), and ICBO under 10 nA at 60 V. |
 | Transistor in 3D | onsemi's TO-92 drawing for the KSP2222A's straight-lead case, "TO-92 3 4.825x4.76", case 135AN (98AON13880G, 31 July 2016). It prints each size as a range, and the model uses the middle, as the drawing's own name does: body 4.76 wide, 4.825 tall and 3.62 deep, its round back 2.395 behind the legs; legs 0.46 × 0.41 mm, 14.41 mm long, 1.27 mm apart (exact). The round's radius is half the width, as drawn, and the flat face's position is worked out from the depth. The drawing gives no height above a board, so it's drawn sitting on it. Leg 1 is the emitter, 2 the base, 3 the collector, from the left facing the flat side (KSP2222A, page 1); top mark PN2222A (Fairchild's PN2222A sheet). The inside is on no datasheet: the lead frame, chip and wires are an illustration. The chip is drawn on the collector's leg because a transistor chip's bottom layer is its collector (Wikipedia, "Bipolar junction transistor": a 2N2222's die is "made in layers with the collector at the bottom"); the layers are a sketch of their order, not their sizes. Silicon and gold are physicallybased.info's measured colours; the wire's metal isn't published, so gold is only how it's drawn. These legs are 1.27 mm apart, so they won't sit in a breadboard's 2.54 mm holes without spreading; onsemi's formed-lead case 135AR spreads them, for later. Not checked against KiCad's TO-92 model. |
-| Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. A capacitor has no series resistance (its tan δ is far too small to show at these speeds), its leak is a plain resistance though a real one's falls as it sits charged, and charged the wrong way round it only warns: the datasheet gives no numbers for that. The transistor drops the SPICE model's high-current roll-off (Ikf), low-current leakage (Ise, Ne), Early effect (Vaf), capacitances and temperature terms: its gain is a flat 255.9, inside every datasheet limit but higher than a real one at hundreds of milliamps. Past its ratings it only warns: its heat isn't modelled yet, and its breakdown voltages aren't either. |
+| ESP32 | Espressif's ESP32 Series Datasheet v5.3, Table 5-3 (DC characteristics at 3.3 V, 25 °C): HIGH at or above 0.75 × VDD, LOW at or below 0.25 × VDD, up to 50 nA of leakage, 45 kΩ pull-up and pull-down (typical). The output's drive is the table's typical figures, which it only gives at maximum drive strength: 40 mA out at 2.64 V or above, 28 mA in at 0.495 V; as resistances, 16.5 Ω and 17.7 Ω. Supply 3.3 V, at most 3.6 V. Which pins have an ADC, and which, from its pin table; GPIO34 to 39 "are input-only… no output driver or internal pull-up/pull-down". |
+| analogRead() | ESP-IDF v5.3's own ESP32 calibration, components/esp_adc/esp32/adc_cali_line_fitting.c (Apache-2.0), run backwards: at Arduino's 12 dB attenuation, a straight line from 142 mV (ADC1) or 128 mV (ADC2) at about 0.81 mV a step up to reading 2880, then its measured lookup tables, for a chip with no calibration burned in (the nominal 1100 mV reference). The lookup tables are on by ESP-IDF's default (CONFIG_ADC_CALI_LUT_ENABLE). |
+| Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. A capacitor has no series resistance (its tan δ is far too small to show at these speeds), its leak is a plain resistance though a real one's falls as it sits charged, and charged the wrong way round it only warns: the datasheet gives no numbers for that. The transistor drops the SPICE model's high-current roll-off (Ikf), low-current leakage (Ise, Ne), Early effect (Vaf), capacitances and temperature terms: its gain is a flat 255.9, inside every datasheet limit but higher than a real one at hundreds of milliamps. Past its ratings it only warns: its heat isn't modelled yet, and its breakdown voltages aren't either. The ESP32's 3.3 V regulator is perfect, its pins' 2 pF isn't modelled, its ADC doesn't wander by the ±60 mV the datasheet allows, and its output drive is the typical figure at maximum strength, the only one the datasheet gives. A pin in the band between LOW and HIGH, or one its leak could tip, reads as the nearer side, flagged; a real chip could give either. What a program writes reaches the circuit a millisecond later, not microseconds; and a loop() that never waits runs once a millisecond, not millions of times a second. Contact bounce isn't simulated: neither push button's datasheet the kit could use gives its shape. |
 
 ### Not modelled yet
 
@@ -233,7 +254,7 @@ Inductors arrive in piece 7, with motors and flyback diodes. Temperature doesn't
 | 3 | A knob: a voltage divider, then a dimmer | the knob (yours) |
 | 4 | Capacitors: charge one, then watch an LED fade as it empties | the capacitor (yours); time steps a part can see |
 | 5 | Transistors: switch an LED with a tiny base current, then dim it with the knob | the transistor (yours); controlled currents |
-| 6 | An ESP32 runs your Arduino code, and reads your buttons and knob | a virtual microcontroller on the same clock; floating inputs, pull-ups, contact bounce |
+| 6 | An ESP32 runs your program (TypeScript, Arduino's functions), blinks an LED, reads a button and the knob, and drives the transistor | the microcontroller pin (yours) and your program; programs on the same clock, in a worker; floating inputs, pull-ups, the ADC |
 | 7 | Motors, H-bridges, flyback diodes, brownouts | the motor; inductors |
 | 8 | The car, steered by Wheel | a 2D robot body |
 

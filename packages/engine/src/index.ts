@@ -18,6 +18,7 @@ export { adcMillivolts, adcReading, type AdcUnit } from './program/adc';
 export { Machine, type FloatingRead, type ProgramTransport } from './program/machine';
 export { FRESH, isDue, ProgramRunner, type Program, type RunnerState, type Snapshot, type Writes } from './program/runner';
 export { ProgramMistake } from './program/arduino';
+export * as arduino from './program/arduino';
 export * as yourProgram from './lesson-6-microcontroller/program';
 export { Ground } from './parts/ground';
 export { Junction } from './parts/junction';

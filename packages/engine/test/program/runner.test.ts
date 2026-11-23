@@ -1,6 +1,6 @@
 /** The program runner on its own: no circuit, just snapshots in and writes out. */
 import { describe, expect, it } from 'vitest';
-import { ProgramRunner, type Snapshot } from '../../src/index';
+import { isDue, ProgramRunner, type Snapshot } from '../../src/index';
 import {
   delay,
   digitalRead,
@@ -16,6 +16,7 @@ import {
 } from '../../src/program/arduino';
 
 const PINS: Snapshot['pins'] = {
+  34: { level: 'low', volts: 0, inputOnly: true },
   2: { level: 'low', volts: 0 },
   4: { level: 'high', volts: 3.3 },
   5: { level: 'unknown', volts: 2 },
@@ -135,6 +136,40 @@ describe('ProgramRunner', () => {
     });
     await expect(crashing.resume(at(1))).rejects.toThrow('boom');
     expect(crashing.failed?.message).toBe('boom');
+  });
+
+  it('refuses an output or a pull on an input-only pin, as the chip has neither', async () => {
+    const output = new ProgramRunner({
+      setup() {
+        pinMode(34, OUTPUT);
+      },
+      loop() {
+        // never reached
+      },
+    });
+    await expect(output.resume(at(1))).rejects.toThrow(/GPIO34 can only be an INPUT/);
+    const pulled = new ProgramRunner({
+      setup() {
+        pinMode(34, INPUT_PULLUP);
+      },
+      loop() {
+        // never reached
+      },
+    });
+    await expect(pulled.resume(at(1))).rejects.toThrow(/no pull-up or pull-down/);
+  });
+
+  it('tells a worker’s caller when it’s next due, in plain data that agrees with the runner itself', async () => {
+    const runner = new ProgramRunner({
+      async loop() {
+        await delay(100);
+      },
+    });
+    for (let ms = 1; ms <= 350; ms++) {
+      expect(isDue(runner.state(), ms), `${String(ms)} ms`).toBe(runner.due(ms));
+      if (runner.due(ms)) await runner.resume(at(ms));
+    }
+    expect(runner.state().until).toBe(401);
   });
 
   it('refuses the Arduino functions outside setup() and loop()', () => {
