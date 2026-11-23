@@ -109,7 +109,11 @@ Pop-out windows (a window in its own browser window, for a second screen) are no
   the battery's voltage and the 63 % it reaches in resistance × capacitance seconds.
 - **Transistors**: the Inspector shows the current into the base and through the collector, collector ÷ base, and
   whether it's off, amplifying, or switched fully on (when the rest of the circuit, not the base, is setting the
-  current: under 90 % of gain × base current, a line Bench draws).
+  current: under 90 % of gain × base current, a line Bench draws). The **Graph** draws two things from your model,
+  measured with the collector held at 10 V as the datasheet measures gain: collector current against the voltage on
+  the base (a diode's climb), and against the current into it (a straight line, 255.9 times steeper). A dot shows
+  where it is now, with a trail of where it's been: turn the knob and it rides the line, then goes flat when it's
+  fully on.
 
 Every wire is a real 10 cm jumper with its own resistance and its own current, so a hand-built loop reads a hair
 under the same loop with perfect connections: about 1 µA less at 330 Ω, which is what three jumpers' 16 mΩ

@@ -18,6 +18,8 @@ import { Switch } from '../components/Switch';
 import { YourTurn } from '../components/YourTurn';
 import type { Point } from '../geometry';
 import { DATASHEET_POINTS, measureLed } from '../kit';
+import { measureTransistor } from '../measureTransistor';
+import { TransistorGraph, type TransistorDot } from '../components/TransistorGraph';
 import { LessonPanel } from '../lessons/LessonPanel';
 import type { Subject } from '../three/Viewer3d';
 import { useShowWindow } from './show';
@@ -330,11 +332,13 @@ function View3d() {
 export function GraphWindow() {
   const { board, sim, selection } = useSession();
   const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
-  const graphed = board.parts.filter((p) => p.kind === 'capacitor' || p.kind === 'led');
+  const graphed = board.parts.filter((p) => p.kind === 'capacitor' || p.kind === 'led' || p.kind === 'transistor');
   const chosen =
     graphed.find((p) => selection.parts.includes(p.id)) ??
+    graphed.find((p) => p.kind === 'transistor') ??
     graphed.find((p) => p.kind === 'capacitor') ??
     graphed.find((p) => p.kind === 'led');
+  if (chosen?.kind === 'transistor') return <TransistorPane key={chosen.id} chosen={chosen} />;
   if (chosen?.kind === 'capacitor') {
     const trace = sim.trace(chosen.id);
     const batteries = board.parts.filter((p) => p.kind === 'battery').map((p) => supplyFor(p.props.supply).volts);
@@ -362,6 +366,47 @@ export function GraphWindow() {
     );
   }
   return <LedGraph chosen={chosen} />;
+}
+
+/** How many places a transistor's trail remembers. */
+const TRAIL = 160;
+
+/** Far enough from the last place to be a new one: 1 % of either current, or a tenth of a microamp. */
+const moved = (a: TransistorDot, b: TransistorDot) =>
+  [
+    [a.baseAmps, b.baseAmps],
+    [a.collectorAmps, b.collectorAmps],
+  ].some(([u, v]) => Math.abs(u - v) > Math.max(1e-7, 0.01 * Math.abs(v)));
+
+/** The selected transistor's two graphs, with where it's been since the graph opened. */
+function TransistorPane({ chosen }: { readonly chosen: PlacedPart }) {
+  const { sim } = useSession();
+  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
+  const [curve] = useState(measureTransistor);
+  const [trail, setTrail] = useState<readonly TransistorDot[]>([]);
+  const reading = snapshot.parts[chosen.id];
+  const q = reading?.written ? reading.transistor : undefined;
+  const collectorAmps = q?.collectorAmps;
+  const now = q && collectorAmps !== undefined ? { baseVolts: q.baseVolts, baseAmps: q.baseAmps, collectorAmps } : undefined;
+  // Somewhere new: remember it (state worked out while rendering, as React allows, rather than in an effect).
+  const last = trail.at(-1);
+  if (now && (!last || moved(last, now))) setTrail([...trail.slice(1 - TRAIL), now]);
+
+  return (
+    <div className="pane pane-scroll graph-pane">
+      <p className="pane-note">
+        {curve
+          ? `${chosen.label}: its collector current against the voltage on its base, then against the current into it. Click an LED or a capacitor to graph it instead.`
+          : `${chosen.label} isn’t in the circuit until your transistor’s diodes() and action() are written.`}
+      </p>
+      <TransistorGraph curve={curve} now={now} trail={trail} />
+      <p className="graph-note">
+        {now
+          ? 'The top one is a diode’s climb: almost nothing until about 0.6 V, then about 48 times more for every 0.1 V. In the bottom one, while it’s amplifying, the dot rides the line, 256 times the base current; fully on, it leaves the line and goes flat, because the rest of the circuit is setting the current, not the base.'
+          : 'No dot yet: there’s no collector reading until your transistor’s current() is written.'}
+      </p>
+    </div>
+  );
 }
 
 /** The selected LED's current against its voltage: your model's curve, the datasheet's dots, and where it is now. */

@@ -598,6 +598,29 @@ input[type='range']:active::-webkit-slider-thumb {
   border-top-color: var(--text);
 }
 
+/* A transistor's two plots, one above the other, each titled. */
+.q-graph .iv-plot {
+  min-height: 160px;
+}
+
+.q-graph .q-title {
+  margin: 6px 0 2px;
+  color: var(--text);
+}
+
+.q-trail {
+  fill: var(--muted);
+  opacity: 0.55;
+}
+
+.key-trail::before {
+  width: 5px;
+  height: 5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
 .graph-note {
   margin: 8px 0 0;
   font-size: 12px;
