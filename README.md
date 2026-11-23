@@ -103,6 +103,9 @@ Pop-out windows (a window in its own browser window, for a second screen) are no
 - **Capacitors**: pick 220 to 2200 µF in the Inspector, which shows what it's holding, the current filling or
   emptying it, and the energy stored. The **Graph** draws the selected capacitor's voltage over the last 30 s, with
   the battery's voltage and the 63 % it reaches in resistance × capacitance seconds.
+- **Transistors**: the Inspector shows the current into the base and through the collector, collector ÷ base, and
+  whether it's off, amplifying, or switched fully on (when the rest of the circuit, not the base, is setting the
+  current: under 90 % of gain × base current, a line Bench draws).
 
 Every wire is a real 10 cm jumper with its own resistance and its own current, so a hand-built loop reads a hair
 under the same loop with perfect connections: about 1 µA less at 330 Ω, which is what three jumpers' 16 mΩ
@@ -146,6 +149,8 @@ packages/engine/src/
                                   and the slide switch is two of them
   lesson-3-knob/potentiometer.ts  your knob: two resistors sharing a wiper (legs() is written for you)
   lesson-4-capacitors/capacitor.ts  your capacitor: the first part that remembers (its charge, tick to tick)
+  lesson-5-transistors/transistor.ts  your transistor: two diodes, and a current one of them steers (its curves
+                                  and leads are written for you)
   parts/                          built in: battery, resistor, wire, ground, junction, supply, slide switch,
                                   electrolytic (your capacitor, plus the leak its datasheet allows)
 ```
@@ -176,8 +181,13 @@ The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder th
   smooth curve while resistance × capacitance is much longer than a tick: through 1 kΩ, 1000 µF fills to 63 % in
   1 s to within 0.03 %. Straight across a battery (R × C around a tick) it ends at the right voltage, but the
   first few milliseconds of the rush aren't the true shape.
-- **Parts.** A part describes itself with conductances, current and voltage sources, junctions and private internal
-  nodes. `ThermalMass` turns power into temperature exactly, so heat and burn-out follow real thermal resistance.
+- **Controlled currents.** A transistor needs a current between two nodes set by the voltage between two others
+  (`controlledCurrent`). It's straightened around its guess like a junction, and the one matrix entry it adds
+  isn't mirrored across the diagonal, which elimination with pivoting doesn't mind. Guesses are kept per part and
+  per pair of nodes, so a junction and the current it steers always share one (a test checks a current mirror
+  copies a diode's current to 1 part in 10⁹).
+- **Parts.** A part describes itself with conductances, current and voltage sources, junctions, controlled
+  currents and private internal nodes. `ThermalMass` turns power into temperature exactly, so heat and burn-out follow real thermal resistance.
 - **Checks.** `circuit.audit()` measures Kirchhoff's current law at every node and the power balance of the whole
   circuit. Every test circuit asserts both.
 
@@ -198,7 +208,8 @@ The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder th
 | Knob in 3D | The PTV09A-4 drawing (rear mount, no bushing) with the 15 mm F-type shaft, and the datasheet's recommended board layout. Sizes printed there are used as printed: body 10.0 mm wide and 6.8 mm deep, its top 5.5 mm from the shaft's centre; shaft 6.0 mm across, its tip 15 mm up, with a 6 mm flat leaving 4.5 mm; a collar 1.1 mm deep; the metal ears 11.4 mm across, their legs 2.0 mm wide reaching 3.8 mm below the body, into slots 10.6 mm apart; pins 2.5 mm apart, 7.0 mm from the shaft's centre, 1.5 mm wide where they leave the body. The pin tips are drawn 0.8 × 0.5 mm so they fit the layout's 1.0 mm holes (the A-4 drawing doesn't print them). The rest of the outside is scaled off the drawing. The shaft's flat faces 40° clockwise from the top at full anticlockwise, and the pins in the middle, as drawn. Pins are numbered 1, 2, 3 from the left with the pins towards you, as in the board layout; the taper graph has pin 1 to pin 2 growing as the knob turns from its anticlockwise end. The inside (track, wiper, rotor, silver ends and ring) isn't on the datasheet: it's an illustration of how carbon knobs are built, and the 3D view says so. |
 | Capacitors | Nichicon UVR series datasheet (CAT.8100M), 25 V row: 220, 330, 470, 1000 and 2200 µF, ±20 % (the nominal is used). Leakage is its "after 2 minutes at rated voltage" column, 0.01 × µF × V µA, treated as a resistance across the capacitor worked out at the rated voltage (25 V ÷ that), the worst it may be: every one then empties itself with a 100 s time constant. tan δ, ripple current, case size and leads are shown on the spec sheet, not simulated. |
 | Capacitor in 3D | The UVR datasheet's row for each size (case φD × L, lead spacing P, lead diameter φd) and its radial lead drawing (leads "15 min.", the + lead "4 min." longer: the model uses those minimums; a pressure relief vent; a PET sleeve, black with white print). The inside follows Nichicon's technical notes (CAT.8101H: two aluminium foils with electrolyte-soaked paper between, wound and sealed with rubber; foils 0.02–0.11 mm, oxide about 1.3–1.5 nm per volt), drawn as an illustration with the layers exaggerated. The can's groove and the vent's score lines are drawn the way KiCad's model generator draws them; the − stripe's look is drawn too. |
-| Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. A capacitor has no series resistance (its tan δ is far too small to show at these speeds), its leak is a plain resistance though a real one's falls as it sits charged, and charged the wrong way round it only warns: the datasheet gives no numbers for that. |
+| Transistor | PN2222A (TO-92, legs E B C), sold by onsemi now as the KSP2222A. The model is the SPICE model printed on Fairchild's PN2222A datasheet (Rev. A1, August 2004), cut to its DC core: Is 14.34 fA, Bf 255.9, Br 6.092, Rb 10 Ω, Rc 1 Ω (Ebers–Moll, both junctions' emission at 1). Limits from onsemi's KSP2222A datasheet (Rev. 2, October 2023): IC 600 mA (Fairchild's 2014 PN2222A sheet says 1.0 A; the newer, lower figure is used), VCEO 40 V, PD 625 mW. The tests hold the model to that sheet: hFE at each of its test currents, VCE(sat) at most 0.3 V and VBE(on) 0.6–1.2 V at 150 mA (the model: 0.18 V and 0.94 V), 1.0 V and 2.0 V at 500 mA (0.53 V and 1.32 V), and ICBO under 10 nA at 60 V. |
+| Simplifications | The LED dies the moment its junction passes 125 °C; a real one dims and degrades first. One thermal mass per part, not a die-and-package chain. Switch contacts don't bounce yet (that matters once a microcontroller reads them), and past their rating Bench only warns: neither datasheet says how long they'd last. A knob's 0.05 W is checked against the whole track's heat; when only part of the track carries the current, that part runs hotter than the check knows. It only warns too: no heat data. A capacitor has no series resistance (its tan δ is far too small to show at these speeds), its leak is a plain resistance though a real one's falls as it sits charged, and charged the wrong way round it only warns: the datasheet gives no numbers for that. The transistor drops the SPICE model's high-current roll-off (Ikf), low-current leakage (Ise, Ne), Early effect (Vaf), capacitances and temperature terms: its gain is a flat 255.9, inside every datasheet limit but higher than a real one at hundreds of milliamps. Past its ratings it only warns: its heat isn't modelled yet, and its breakdown voltages aren't either. |
 
 ### Not modelled yet
 
@@ -212,7 +223,7 @@ Inductors arrive in piece 7, with motors and flyback diodes. Temperature doesn't
 | 2 | Switches and buttons: on/off, both (AND), either (OR) | the switch (yours), slide switch, push button |
 | 3 | A knob: a voltage divider, then a dimmer | the knob (yours) |
 | 4 | Capacitors: charge one, then watch an LED fade as it empties | the capacitor (yours); time steps a part can see |
-| 5 | Transistors: a small signal switches a big current | the transistor (yours) |
+| 5 | Transistors: switch an LED with a tiny base current, then dim it with the knob | the transistor (yours); controlled currents |
 | 6 | An ESP32 runs your Arduino code, and reads your buttons and knob | a virtual microcontroller on the same clock; floating inputs, pull-ups, contact bounce |
 | 7 | Motors, H-bridges, flyback diodes, brownouts | the motor; inductors |
 | 8 | The car, steered by Wheel | a 2D robot body |

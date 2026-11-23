@@ -9,6 +9,7 @@ import {
   Resistor,
   SlideSwitch,
   Switch,
+  Transistor,
   Wire,
   type Node,
   type Part,
@@ -65,6 +66,8 @@ export interface PartReading {
   readonly knob: KnobReading | undefined;
   /** For a capacitor: the charge it's holding. */
   readonly capacitor: CapacitorReading | undefined;
+  /** For a transistor: the current into its base, and what that lets through. */
+  readonly transistor: TransistorReading | undefined;
   /** For an LED: seconds it's been glowing without a break (at least the faintest current its datasheet plots). */
   readonly glowing: number | undefined;
   /** For a glowing LED: the most current it's carried since it started glowing, A. */
@@ -92,6 +95,33 @@ export interface CapacitorReading {
   /** How fast its voltage is changing, V/s, over the last half second: undefined until it has that much history. */
   readonly rising: number | undefined;
 }
+
+/** What a transistor is doing: nothing, amplifying, or switched fully on. */
+export type TransistorState = 'off' | 'amplifying' | 'on';
+
+export interface TransistorReading {
+  /** Amps into the base. */
+  readonly baseAmps: number;
+  /** Amps in at the collector: the part's own current. */
+  readonly collectorAmps: number;
+  /** Volts collector to emitter, and base to emitter. */
+  readonly collectorVolts: number;
+  readonly baseVolts: number;
+  readonly state: TransistorState;
+}
+
+/**
+ * Below this into the base, a transistor counts as off. Ours, not the datasheet's: a microamp into a PN2222A lets
+ * through a quarter of a milliamp, under the faintest glow on the LED's datasheet.
+ */
+const OFF_BASE_AMPS = 1e-6;
+
+/**
+ * Once the collector carries less than this share of what the base current could let through, something else in
+ * the circuit is setting the current, not the transistor: it's switched fully on (saturated). Ours: a line drawn
+ * clear of the noise either side.
+ */
+const ON_SHARE = 0.9;
 
 /** A capacitor's voltage over the last little while: what the Graph draws. */
 export interface Trace {
@@ -399,6 +429,7 @@ export class BoardSim {
       closed: undefined,
       knob: undefined,
       capacitor: undefined,
+      transistor: undefined,
       glowing: undefined,
       peakAmps: undefined,
     };
@@ -432,6 +463,20 @@ export class BoardSim {
       const reversed = written && part.held < -REVERSE_VOLTS;
       const capacitor = { held: written ? part.held : 0, farads, ratedVolts, reversed, rising: written ? this.rateOf(live.doc.id) : undefined };
       return { ...base, celsius: undefined, burnt: false, over: reversed || part.held > ratedVolts, capacitor };
+    }
+    if (part instanceof Transistor) {
+      // Its leads are given in the stub, so the nodes inside them exist once its stamp has run at all.
+      const live = written && !failed;
+      const collectorAmps = live ? (amps ?? 0) : 0;
+      const baseAmps = live ? c.across(part.base, part.inside.base) / part.spec.baseOhms : 0;
+      const collectorVolts = failed ? 0 : c.across(part.collector, part.emitter);
+      const baseVolts = failed ? 0 : c.across(part.base, part.emitter);
+      const state: TransistorState =
+        baseAmps < OFF_BASE_AMPS ? 'off' : collectorAmps < ON_SHARE * part.spec.forwardGain * baseAmps ? 'on' : 'amplifying';
+      const { maxCollectorAmps, maxCollectorVolts, maxWatts } = part.spec;
+      const over = collectorAmps > maxCollectorAmps || collectorVolts > maxCollectorVolts || watts > maxWatts;
+      const transistor = { baseAmps, collectorAmps, collectorVolts, baseVolts, state };
+      return { ...base, volts: collectorVolts, celsius: undefined, burnt: false, over, transistor };
     }
     if (part instanceof Resistor) {
       const over = !part.burnt && part.temperature > part.spec.maxCelsius;

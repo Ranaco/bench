@@ -1,4 +1,4 @@
-import { AMBIENT_CELSIUS, awgArea, conductorOhms, JUMPER, KNOB_10K, RED_LED, SLIDE_SWITCH, TACT_SWITCH, type SwitchSpec } from '@bench/engine';
+import { AMBIENT_CELSIUS, awgArea, conductorOhms, JUMPER, KNOB_10K, PN2222A, RED_LED, SLIDE_SWITCH, TACT_SWITCH, type SwitchSpec } from '@bench/engine';
 import { useSyncExternalStore, type CSSProperties } from 'react';
 import { bandsFor } from '../bands';
 import { Segmented } from '../components/Segmented';
@@ -39,6 +39,20 @@ const rating = (spec: SwitchSpec) =>
 /** A wire's resistance at room temperature, from its length, copper and its size: what the circuit uses for it. */
 /** The parts the 3D view can show, linked to the one selected. */
 const IN_3D: ReadonlySet<PlacedPart['kind']> = new Set(['knob', 'capacitor']);
+
+/** A transistor's ratings, as one line: collector current, collector-emitter voltage, heat. */
+const TRANSISTOR_LIMITS = [
+  formatSI(PN2222A.maxCollectorAmps, 'A', { trim: true }),
+  formatSI(PN2222A.maxCollectorVolts, 'V', { trim: true }),
+  formatSI(PN2222A.maxWatts, 'W', { trim: true }),
+].join(' · ');
+
+/** What a transistor's state means, in a few words. */
+const TRANSISTOR_STATE = {
+  off: 'Off: nothing into the base, so nothing through',
+  amplifying: 'Amplifying: the base current sets the collector’s',
+  on: 'Switched fully on: the rest of the circuit sets the current',
+} as const;
 
 const wireOhms = (wire: WireDoc) => conductorOhms(JUMPER.conductor, wire.metres, awgArea(JUMPER.gauge), AMBIENT_CELSIUS);
 
@@ -158,6 +172,7 @@ function PartInspector(
         />
       )}
 
+      {reading?.transistor && reading.written && <p className="part-state">{TRANSISTOR_STATE[reading.transistor.state]}</p>}
       {reading && <Readings part={part} reading={reading} pins={props.pins} />}
 
       {reading?.burnt && (
@@ -191,6 +206,11 @@ function PartInspector(
       {reading?.over && part.kind === 'knob' && (
         <p className="warning">
           {`Over its ${formatSI(KNOB_10K.ratedWatts, 'W', { trim: true })} rating: a carbon track run this hot wears and chars. The datasheet has no heat data, so Bench only warns.`}
+        </p>
+      )}
+      {reading?.over && part.kind === 'transistor' && (
+        <p className="warning">
+          {`Past what its datasheet allows (${TRANSISTOR_LIMITS}). Bench doesn’t model a transistor’s heat, so it only warns.`}
         </p>
       )}
       {reading?.over && (part.kind === 'switch' || part.kind === 'button') && (
@@ -333,6 +353,19 @@ function Readings(props: {
       const spec = capacitorSpec(part.props);
       rows.push(['Leak across it, the worst allowed', formatSI(spec.ratedVolts / spec.leakAmps, 'Ω', { digits: 3 })]);
       rows.push(['Rated for', formatSI(cap.ratedVolts, 'V', { trim: true })]);
+      break;
+    }
+    case 'transistor': {
+      const q = reading.transistor;
+      if (!q) break;
+      rows.push(['Into the base', amps(q.baseAmps)]);
+      rows.push(['Collector to emitter', amps(q.collectorAmps)]);
+      // The gain only means something while there's base current to divide by.
+      if (q.state !== 'off') rows.push(['Collector ÷ base', `× ${(q.collectorAmps / q.baseAmps).toFixed(0)}`]);
+      rows.push(['Across it, collector to emitter', volts(q.collectorVolts)]);
+      rows.push(['Base to emitter', volts(q.baseVolts)]);
+      rows.push(['Turning into heat', watts(reading.watts)]);
+      rows.push(['Rated for', TRANSISTOR_LIMITS]);
       break;
     }
     case 'resistor':

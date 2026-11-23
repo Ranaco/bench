@@ -20,6 +20,7 @@ const MODELS: Readonly<Record<string, readonly [withArticle: string, bare: strin
   switch: ['a switch', 'switch'],
   potentiometer: ['a knob', 'knob'],
   capacitor: ['a capacitor', 'capacitor'],
+  transistor: ['a transistor', 'transistor'],
 };
 
 

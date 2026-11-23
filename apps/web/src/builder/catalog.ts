@@ -9,6 +9,7 @@ import {
   SlideSwitch,
   Switch,
   TACT_SWITCH,
+  Transistor,
   UVR_25V,
   type ElectrolyticSpec,
   type Node,
@@ -161,6 +162,19 @@ export const CATALOG: Readonly<Record<PartKind, KindDef>> = {
     defaults: { uf: 1000 },
     create: (label, nodes, props) => new Electrolytic(label, nodes.plus, nodes.minus, capacitorSpec(props)),
   },
+  transistor: {
+    kind: 'transistor',
+    name: 'Transistor',
+    blurb: 'An NPN transistor: a small current into its base lets a big one flow from collector to emitter',
+    pins: [
+      { id: 'collector', x: 20, y: -60, name: 'collector (C)' },
+      { id: 'base', x: -60, y: 0, name: 'base (B)' },
+      { id: 'emitter', x: 20, y: 60, name: 'emitter (E)' },
+    ],
+    box: { x: -60, y: -60, width: 96, height: 120 }, // out to the round of its case
+    defaults: {},
+    create: (label, nodes) => new Transistor(label, nodes.collector, nodes.base, nodes.emitter),
+  },
   ground: {
     kind: 'ground',
     name: 'Ground',
@@ -182,7 +196,7 @@ export const CATALOG: Readonly<Record<PartKind, KindDef>> = {
   },
 };
 
-export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'capacitor', 'ground'];
+export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'capacitor', 'transistor', 'ground'];
 
 /** Rotates a point about the origin by a multiple of 90°. */
 export function rotate(p: Point, rotation: Rotation): Point {

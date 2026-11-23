@@ -1033,6 +1033,33 @@ kbd {
   fill: var(--hot);
 }
 
+/* A transistor: its emitter's arrow is filled; dashed until your model is written; orange past its ratings. */
+.symbol.arrowhead {
+  fill: var(--part);
+}
+
+.transistor.unwritten .symbol {
+  stroke: var(--faint);
+  stroke-dasharray: 4 4;
+}
+
+.transistor.unwritten .symbol.arrowhead {
+  fill: var(--faint);
+  stroke-dasharray: none;
+}
+
+.transistor.unwritten .label {
+  fill: var(--faint);
+}
+
+.part.transistor.over .symbol {
+  stroke: var(--hot);
+}
+
+.part.transistor.over .symbol.arrowhead {
+  fill: var(--hot);
+}
+
 .knob-ends {
   font-size: 12px;
   color: var(--muted);
@@ -1237,6 +1264,11 @@ kbd {
 .notice-row p {
   margin: 0;
   color: var(--muted);
+}
+
+/* What a part is doing right now, in words: a transistor off, amplifying or switched fully on. */
+.part-state {
+  margin: 0;
 }
 
 .readings {

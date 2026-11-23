@@ -1,4 +1,4 @@
-import { RED_LED } from '@bench/engine';
+import { PN2222A, RED_LED } from '@bench/engine';
 import { netsOf, type Board, type PartKind, type PinRef, type PlacedPart } from '../builder/board';
 import { CATALOG, supplyFor } from '../builder/catalog';
 import type { MeterState } from '../builder/meter';
@@ -427,13 +427,104 @@ export const CAPACITORS: Lesson = {
     'A capacitor fills and empties along the same curve: fast at first, then slower and slower. How fast is set by resistance × capacitance: through 1 kΩ, 1000 µF gets 63 % of the way in 1 second. More resistance or more capacitance, and everything takes longer. Next, transistors: a small current switching a big one. Build mode has capacitors too.',
 };
 
-export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS];
+/** Each transistor that's in the circuit, with what it's doing. */
+function transistors({ board, snapshot }: LessonState) {
+  return ofKind(board, 'transistor').flatMap((part) => {
+    const reading = snapshot.parts[part.id];
+    return reading?.written && reading.transistor ? [{ part, ...reading.transistor }] : [];
+  });
+}
+
+/**
+ * A lit LED carrying a transistor's collector current: in its collector's path. Within 2 %, to allow for the
+ * picoamps the solver leaks to ground at every node and nothing else.
+ */
+const litByCollector = (state: LessonState, collectorAmps: number) =>
+  collectorAmps >= GLOW_AMPS && liveLeds(state).some((led) => Math.abs((led.amps ?? 0) - collectorAmps) <= 0.02 * collectorAmps);
+
+/**
+ * A transistor whose base is fed from a knob's wiper: the knob across the battery, and what leaves its wiper is
+ * what goes into the base (within 2 %, the same allowance as above).
+ */
+function fedByKnob(state: LessonState, baseAmps: number): boolean {
+  return dividers(state.board).some((d) => {
+    const wiper = state.snapshot.parts[d.knob.id]?.knob?.wiperAmps;
+    return wiper !== undefined && baseAmps > 0 && Math.abs(Math.abs(wiper) - baseAmps) <= 0.02 * baseAmps;
+  });
+}
+
+/** At least this many times more out of the collector than into the base, for "a small current switching a big one". */
+const SWITCH_GAIN = 10;
+
+export const TRANSISTORS: Lesson = {
+  id: 'transistors',
+  number: 5,
+  title: 'Transistors',
+  goal: 'Switch an LED with a current too small to light it, then dim it smoothly: a transistor switching, then amplifying.',
+  parts: ['battery', 'resistor', 'led', 'button', 'knob', 'transistor', 'ground'],
+  steps: [
+    {
+      id: 'collector',
+      title: 'Put the LED on the collector',
+      detail:
+        'Battery + to a 330 Ω resistor, the resistor to the LED’s anode, the LED’s cathode to the transistor’s collector (C), and its emitter (E, the leg with the arrow) to the battery’s −. Leave the base (B) unconnected. The LED stays dark: with nothing going into the base, the transistor holds back most of the battery’s push.',
+      passes: (state) => {
+        const battery = biggestBattery(state.board);
+        return (
+          battery !== undefined &&
+          liveLeds(state).length > 0 &&
+          transistors(state).some((q) => q.state === 'off' && q.collectorVolts >= battery / 2)
+        );
+      },
+    },
+    {
+      id: 'switch',
+      title: 'Switch it on through the base',
+      detail:
+        'Battery + to a push button, the button to a 10 kΩ resistor, the resistor to the base. Hold the button down: under a milliamp goes into the base, and the LED lights with about 25 times that. A current too small to light the LED switches on one that can.',
+      passes: (state) =>
+        ofKind(state.board, 'button').some((b) => held(state, b)) &&
+        transistors(state).some(
+          (q) => q.state === 'on' && litByCollector(state, q.collectorAmps) && q.collectorAmps >= SWITCH_GAIN * q.baseAmps,
+        ),
+    },
+    {
+      id: 'measure',
+      title: 'Measure what goes into the base',
+      detail:
+        'Set the meter to Amps and close the clamp round the wire into the base, holding the button. Then move it to the wire into the collector and compare. The Inspector shows both, and collector ÷ base.',
+      passes: (state) => {
+        const clamp = state.meter.leads.clamp;
+        if (state.meter.mode !== 'amps' || clamp?.kind !== 'wire') return false;
+        const amps = Math.abs(state.snapshot.wires[clamp.wire]?.amps ?? 0);
+        return transistors(state).some((q) => q.state !== 'off' && Math.abs(amps - q.baseAmps) <= 0.02 * q.baseAmps);
+      },
+    },
+    {
+      id: 'dimmer',
+      title: 'Make it a dimmer with the knob',
+      detail:
+        'Take out the button and its 10 kΩ. Put the knob’s two end pins across the battery, and its wiper through a 47 kΩ resistor to the base. Turn it low: now the base current follows the knob, and the LED’s current follows the base’s, about 256 times bigger. That’s amplifying.',
+      passes: (state) =>
+        transistors(state).some((q) => q.state === 'amplifying' && fedByKnob(state, q.baseAmps) && litByCollector(state, q.collectorAmps)),
+    },
+    {
+      id: 'full',
+      title: 'Turn it up until it’s fully on',
+      detail: `Turn the knob up. The LED brightens until the transistor is switched fully on: past that, more base current changes nothing, because the 330 Ω and the LED set the current, not the transistor. About ${ma(0.1e-3)} into the base is enough.`,
+      passes: (state) =>
+        transistors(state).some((q) => q.state === 'on' && fedByKnob(state, q.baseAmps) && litByCollector(state, q.collectorAmps)),
+    },
+  ],
+  outro: `A transistor amplifies: the current into its base lets one about ${String(Math.round(PN2222A.forwardGain))} times bigger flow from collector to emitter, until the rest of the circuit can’t give any more. Then it’s a switch, fully on. That’s how a microcontroller pin, good for a few milliamps, will run a motor. Next, a microcontroller. Build mode has the transistor too.`,
+};
+
+export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS, TRANSISTORS];
 
 export const lessonById = (id: string) => LESSONS.find((lesson) => lesson.id === id);
 
 /** What's coming, from the roadmap: shown locked, so the path ahead is visible. */
 export const COMING: readonly { readonly number: number; readonly title: string; readonly blurb: string }[] = [
-  { number: 5, title: 'Transistors', blurb: 'A small signal switches a big current: how a microcontroller drives more than an LED.' },
   { number: 6, title: 'A microcontroller', blurb: 'An ESP32 runs your code and reads your buttons and your knob: floating inputs, pull-ups, and a voltage as a number.' },
   { number: 7, title: 'Motors', blurb: 'H-bridges, flyback diodes and brownouts, where your capacitors and transistors come back.' },
   { number: 8, title: 'The car', blurb: 'A 2D robot body, steered by your phone.' },

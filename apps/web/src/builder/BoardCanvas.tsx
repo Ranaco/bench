@@ -192,6 +192,8 @@ function labelLines(part: PlacedPart): string[] {
     case 'capacitor':
       // Rounded: 0.0022 F × 1e6 is 2199.9999999999995 in floating point.
       return [part.label, `${String(Math.round(capacitorSpec(part.props).farads * 1e6))} µF`];
+    case 'transistor':
+      return [part.label, 'PN2222A'];
     case 'led':
     case 'switch':
     case 'button':

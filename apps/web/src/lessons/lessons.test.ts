@@ -1,10 +1,10 @@
-import { Capacitor, Circuit, GROUND, NotWrittenYet, Potentiometer, Switch, TICK } from '@bench/engine';
+import { Capacitor, Circuit, GROUND, NotWrittenYet, PN2222A, Potentiometer, Switch, TICK, Transistor } from '@bench/engine';
 import { describe, expect, it } from 'vitest';
 import { addWire, EMPTY_BOARD, removePart, removeWire, setProp, type Board } from '../builder/board';
 import { ledLoop, place } from '../builder/fixtures';
 import { METER_START, type MeterState } from '../builder/meter';
 import { BoardSim } from '../builder/sync';
-import { A_KNOB, CAPACITORS, LIGHT_AN_LED, SWITCHES_AND_BUTTONS, type Lesson } from './lessons';
+import { A_KNOB, CAPACITORS, LIGHT_AN_LED, SWITCHES_AND_BUTTONS, TRANSISTORS, type Lesson } from './lessons';
 import { advance, backTo, currentStep } from './progress';
 
 /** Plays a lesson against a board: checks the current step each frame, as the page does. */
@@ -490,6 +490,164 @@ describe.runIf(capacitorWritten)('Lesson 4: Capacitors', () => {
     expect(sim.getSnapshot().unpowered).toBeGreaterThan(0.9);
   });
 });
+
+/** Lesson 5 needs your transistor (packages/engine/src/lesson-5-transistors/transistor.ts): its diodes, its action and its current. */
+const transistorWritten = (() => {
+  const atRest = { time: 0, dt: TICK, ambient: 25, voltage: () => 0, across: () => 0, branchCurrent: () => 0 };
+  const c = new Circuit();
+  const q = new Transistor('Q1', c.node('c'), c.node('b'), GROUND);
+  let junctions = 0;
+  let controlled = 0;
+  try {
+    q.stamp({
+      time: 0,
+      dt: TICK,
+      ambient: 25,
+      internal: (name) => c.node(name),
+      conductance: () => undefined,
+      currentSource: () => undefined,
+      voltageSource: () => 0 as never,
+      junction: () => {
+        junctions++;
+      },
+      controlledCurrent: () => {
+        controlled++;
+      },
+    });
+    q.current(atRest);
+    return junctions > 0 && controlled > 0;
+  } catch (error) {
+    if (error instanceof NotWrittenYet) return false;
+    throw error;
+  }
+})();
+
+const qStep = (done: ReadonlySet<string>) => currentStep(TRANSISTORS, done)?.id;
+
+/**
+ * Lesson 5's circuit: battery + → 330 Ω → LED → collector, emitter → battery −. Its base fed by a push button and
+ * 10 kΩ from the +, or by the knob across the battery and 47 kΩ from its wiper, or by nothing.
+ */
+function collectorLoop(feed: 'none' | 'button' | 'knob', turn = 0.5) {
+  const battery = place(EMPTY_BOARD, 'battery');
+  const load = place(battery.board, 'resistor', 0, 0, { ohms: 330 });
+  const led = place(load.board, 'led');
+  const q = place(led.board, 'transistor');
+  let board = addWire(q.board, { part: battery.id, pin: 'plus' }, { part: load.id, pin: 'a' });
+  board = addWire(board, { part: load.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+  board = addWire(board, { part: led.id, pin: 'cathode' }, { part: q.id, pin: 'collector' });
+  board = addWire(board, { part: q.id, pin: 'emitter' }, { part: battery.id, pin: 'minus' });
+  let button: string | undefined;
+  let knob: string | undefined;
+  if (feed === 'button') {
+    const b = place(board, 'button');
+    const r = place(b.board, 'resistor', 0, 0, { ohms: 10000 });
+    board = addWire(r.board, { part: battery.id, pin: 'plus' }, { part: b.id, pin: 'a' });
+    board = addWire(board, { part: b.id, pin: 'b' }, { part: r.id, pin: 'a' });
+    board = addWire(board, { part: r.id, pin: 'b' }, { part: q.id, pin: 'base' });
+    button = b.id;
+  } else if (feed === 'knob') {
+    const k = place(board, 'knob', 0, 0, { turn });
+    const r = place(k.board, 'resistor', 0, 0, { ohms: 47000 });
+    // Pin 1 on the −, pin 3 on the +: turning it up (towards pin 3) raises the wiper.
+    board = addWire(r.board, { part: battery.id, pin: 'minus' }, { part: k.id, pin: 'a' });
+    board = addWire(board, { part: k.id, pin: 'b' }, { part: battery.id, pin: 'plus' });
+    board = addWire(board, { part: k.id, pin: 'wiper' }, { part: r.id, pin: 'a' });
+    board = addWire(board, { part: r.id, pin: 'b' }, { part: q.id, pin: 'base' });
+    knob = k.id;
+  }
+  const baseWire = board.wires.at(-1)?.id ?? '';
+  return { board, q: q.id, led: led.id, button, knob, baseWire };
+}
+
+const clampOn = (wire: string): MeterState => ({ mode: 'amps', leads: { clamp: { kind: 'wire', wire, t: 0.5 } } });
+
+describe.runIf(transistorWritten)('Lesson 5: Transistors', () => {
+  it('starts with the LED dark on the collector, the base unconnected', () => {
+    const loop = collectorLoop('none');
+    const sim = new BoardSim();
+    const done = play(TRANSISTORS, sim, loop.board, 0.2);
+    expect(qStep(done)).toBe('switch');
+    expect(sim.getSnapshot().parts[loop.q]?.transistor?.state).toBe('off');
+  });
+
+  it('switches the LED on through a button and 10 kΩ, with a small fraction of its current', () => {
+    const loop = collectorLoop('button');
+    const sim = new BoardSim();
+    let done = play(TRANSISTORS, sim, loop.board, 0.2, new Set(['collector']));
+    expect(qStep(done)).toBe('switch'); // not held yet: dark
+    sim.press(loop.button ?? '', true);
+    done = play(TRANSISTORS, sim, loop.board, 0.2, done);
+    expect(qStep(done)).toBe('measure');
+    const q = sim.getSnapshot().parts[loop.q]?.transistor;
+    expect(q?.state).toBe('on');
+    expect((q?.collectorAmps ?? 0) / (q?.baseAmps ?? 1)).toBeGreaterThan(20);
+  });
+
+  it('wants the clamp on the wire into the base, not the one into the collector', () => {
+    const loop = collectorLoop('button');
+    const sim = new BoardSim();
+    sim.sync(loop.board);
+    sim.press(loop.button ?? '', true);
+    const UP_TO_MEASURE = new Set(['collector', 'switch']);
+    const collectorWire = loop.board.wires.find((w) => w.b.part === loop.q && w.b.pin === 'collector')?.id ?? '';
+    let done = play(TRANSISTORS, sim, loop.board, 0.2, UP_TO_MEASURE, clampOn(collectorWire));
+    expect(qStep(done)).toBe('measure');
+    done = play(TRANSISTORS, sim, loop.board, 0.2, done, clampOn(loop.baseWire));
+    expect(qStep(done)).toBe('dimmer');
+  });
+
+  it('dims it with the knob and 47 kΩ: amplifying when turned low, fully on when turned up', () => {
+    const UP_TO_DIMMER = new Set(['collector', 'switch', 'measure']);
+    const low = collectorLoop('knob', 0.2);
+    const sim = new BoardSim();
+    let done = play(TRANSISTORS, sim, low.board, 0.2, UP_TO_DIMMER);
+    expect(sim.getSnapshot().parts[low.q]?.transistor?.state).toBe('amplifying');
+    expect(qStep(done)).toBe('full');
+    done = play(TRANSISTORS, sim, setProp(low.board, low.knob ?? '', 'turn', 0.9), 0.2, done);
+    expect(sim.getSnapshot().parts[low.q]?.transistor?.state).toBe('on');
+    expect(qStep(done)).toBeUndefined();
+  });
+
+  it('follows the knob smoothly while amplifying: the LED’s current is the base’s times the gain', () => {
+    const states: string[] = [];
+    let last = 0;
+    for (let turn = 0.05; turn <= 0.951; turn += 0.05) {
+      const loop = collectorLoop('knob', turn);
+      const sim = new BoardSim();
+      sim.sync(loop.board);
+      const q = sim.getSnapshot().parts[loop.q]?.transistor;
+      const led = sim.getSnapshot().parts[loop.led]?.amps ?? 0;
+      states.push(q?.state ?? '?');
+      expect(led, `turn ${turn.toFixed(2)}`).toBeGreaterThanOrEqual(last - 1e-9); // never dims as it's turned up
+      last = led;
+      // Amplifying means the collector carries at least 90 % of gain × base (ON_SHARE in sync.ts), up to all of it.
+      if (q?.state === 'amplifying') {
+        expect(q.collectorAmps / q.baseAmps, `turn ${turn.toFixed(2)}`).toBeGreaterThanOrEqual(0.9 * PN2222A.forwardGain);
+        expect(q.collectorAmps / q.baseAmps, `turn ${turn.toFixed(2)}`).toBeLessThanOrEqual(PN2222A.forwardGain * 1.001);
+      }
+    }
+    expect(states[0]).toBe('off');
+    expect(states.filter((state) => state === 'amplifying').length).toBeGreaterThanOrEqual(3);
+    expect(states.at(-1)).toBe('on');
+  });
+
+  it('isn’t fooled by an LED lit straight from the battery, beside a transistor that’s off', () => {
+    let board = collectorLoop('none').board;
+    const r = place(board, 'resistor', 0, 0, { ohms: 330 });
+    const led = place(r.board, 'led');
+    const battery = board.parts.find((p) => p.kind === 'battery')?.id ?? '';
+    board = addWire(led.board, { part: battery, pin: 'plus' }, { part: r.id, pin: 'a' });
+    board = addWire(board, { part: r.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+    board = addWire(board, { part: led.id, pin: 'cathode' }, { part: battery, pin: 'minus' });
+    const done = play(TRANSISTORS, new BoardSim(), board, 0.5, new Set(['collector']));
+    expect(qStep(done)).toBe('switch');
+  });
+});
+
+if (!transistorWritten) {
+  it.todo('Lesson 5: needs your transistor, in packages/engine/src/lesson-5-transistors/transistor.ts');
+}
 
 describe('Going back to a step', () => {
   const all = new Set(CAPACITORS.steps.map((step) => step.id));

@@ -10,7 +10,7 @@ import type { Point } from '../geometry';
 export type Rotation = 0 | 90 | 180 | 270;
 
 /** A junction is where a wire was tapped: a dot that wires share. It never comes from the parts box. */
-export type PartKind = 'battery' | 'resistor' | 'led' | 'ground' | 'switch' | 'button' | 'knob' | 'capacitor' | 'junction';
+export type PartKind = 'battery' | 'resistor' | 'led' | 'ground' | 'switch' | 'button' | 'knob' | 'capacitor' | 'transistor' | 'junction';
 
 export interface PlacedPart {
   readonly id: string;
@@ -78,6 +78,7 @@ const PREFIX: Readonly<Record<PartKind, string>> = {
   button: 'BTN',
   knob: 'RV',
   capacitor: 'C',
+  transistor: 'Q',
   junction: 'J',
 };
 
