@@ -2,7 +2,7 @@
  * The ESP32 on the board: its program ending cleanly when the board changes under it, and a pin nothing holds
  * (floating) counting towards nothing.
  */
-import { adcReading, Gpio, ProgramMistake, type ProgramTransport, type Stamp, type Writes } from '@bench/engine';
+import { adcReading, Gpio, NotWrittenYet, ProgramMistake, type ProgramTransport, type Stamp, type Writes } from '@bench/engine';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { addWire, EMPTY_BOARD, removePart } from './board';
 import { ESP32_ADC } from './esp32Board';
@@ -89,10 +89,37 @@ describe('An ESP32 taken off the board while its program is partway through', ()
   });
 });
 
+describe('A part-written pin', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('names every job still to write, current() included, and holds the program until they are', () => {
+    // stamp() stood in for (a plain 1 MΩ to GND), read() and current() not written.
+    vi.spyOn(Gpio.prototype, 'stamp').mockImplementation(function (this: Gpio, s: Stamp) {
+      s.conductance(this.pin, this.gnd, 1e-6);
+    });
+    for (const method of ['read', 'current'] as const) {
+      vi.spyOn(Gpio.prototype, method).mockImplementation(function (this: Gpio) {
+        throw new NotWrittenYet(this.name, 'gpio.ts');
+      });
+    }
+    const { sim, programs } = partwaySim();
+    const chip = place(EMPTY_BOARD, 'esp32');
+    sim.sync(chip.board);
+    void sim.advance(0.05);
+    const snapshot = sim.getSnapshot();
+    expect(snapshot.notWritten.map((m) => m.method).sort()).toEqual(['current', 'read']);
+    expect(snapshot.program?.runs).toBe(false);
+    expect(programs[0]?.resumes).toBe(0);
+  });
+});
+
 describe.runIf(gpioWritten)('A pin nothing holds', () => {
   it('isn’t over, whatever voltage it drifts to', () => {
     // A 9 V battery across two inputs, GPIO4 and GPIO2, and joined to nothing else: neither pin is tied to the chip's
-    // GND. They're 9 V apart, so one of them is past what a pin may be given (−0.3 to 3.6 V), if it meant anything.
+    // GND. In Bench they float 9 V apart, so at least one is outside −0.3 to 3.6 V. (A real chip's input protection
+    // would clamp them; Bench doesn't model it: see the README's simplifications.) What's checked: floating isn't over.
     const chip = place(EMPTY_BOARD, 'esp32');
     const battery = place(chip.board, 'battery');
     let board = addWire(battery.board, { part: chip.id, pin: 'gpio4' }, { part: battery.id, pin: 'plus' });

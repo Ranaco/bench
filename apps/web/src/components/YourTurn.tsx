@@ -31,6 +31,11 @@ const STAMP_JOBS: Readonly<Record<string, string>> = {
   transistor: 'diodes() and action(), the two jobs its stamp() calls, so the solver knows how it behaves',
 };
 
+/** What waits on the jobs left, for a part something else waits on: a program can't run on a half-written pin. */
+const WAITING: Readonly<Record<string, string>> = {
+  pin: 'Your program runs once nothing’s left here.',
+};
+
 function modelOf(file: string): readonly [string, string] {
   const base = file.split('/').at(-1)?.replace(/\.ts$/, '') ?? file;
   return MODELS[base] ?? [`a ${base}`, base];
@@ -69,6 +74,7 @@ export function YourTurn({ part, file, methods }: YourTurnProps) {
             <li key={method}>{(method === 'stamp' && STAMP_JOBS[model]) || STILL_NEEDED[method]}</li>
           ))}
         </ul>
+        {WAITING[model] && <p>{WAITING[model]}</p>}
         <p className="path">In {path}</p>
       </>
     );

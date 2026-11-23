@@ -582,8 +582,10 @@ export class BoardSim {
     const failed = this.stepError !== undefined;
     const machine = this.machine?.machine;
     const programUnwritten = machine?.unwritten() ?? [];
-    // The circuit lists your pin's stamp(); the machine adds its read(), which only a program calls.
-    const notWritten = [...c.notWritten, ...programUnwritten.filter((m) => m.method === 'read')];
+    // The circuit lists your pin's stamp(); the machine adds its read() and current(), which the circuit never calls
+    // (the chip's own current is its supply's) but the program waits for.
+    const listed = new Set(c.notWritten.map((m) => `${m.part}.${m.method}`));
+    const notWritten = [...c.notWritten, ...programUnwritten.filter((m) => !listed.has(`${m.part}.${m.method}`))];
     const unwritten = new Set(c.notWritten.filter((m) => m.method === 'stamp').map((m) => m.part));
 
     const pins: Record<string, number> = {};

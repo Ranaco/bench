@@ -735,6 +735,8 @@ kbd {
   color: var(--muted);
 }
 
+.card ol + p,
+.card ul + p,
 .card .path {
   margin-top: 12px;
 }
