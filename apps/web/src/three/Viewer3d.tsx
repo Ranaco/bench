@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { CAPACITOR_VALUES } from '../builder/catalog';
 import { CapacitorView } from './capacitor/CapacitorView';
+import { DevKitCView, type DevKitCLive } from './esp32/DevKitCView';
 import { KnobView, type KnobLive } from './knob/KnobView';
 import { TransistorView, type TransistorLive } from './transistor/TransistorView';
 
@@ -24,6 +25,11 @@ export type Subject =
       readonly kind: 'transistor';
       readonly label: string | undefined;
       readonly live: TransistorLive | undefined;
+    }
+  | {
+      readonly kind: 'esp32';
+      readonly label: string | undefined;
+      readonly live: DevKitCLive | undefined;
     };
 
 /**
@@ -33,6 +39,9 @@ export type Subject =
 export default function Viewer3d({ subject, note, chooser }: { readonly subject: Subject; readonly note?: string; readonly chooser?: ReactNode }) {
   if (subject.kind === 'knob') {
     return <KnobView turn={subject.turn} onTurn={subject.onTurn} label={subject.label} live={subject.live} note={note} chooser={chooser} />;
+  }
+  if (subject.kind === 'esp32') {
+    return <DevKitCView label={subject.label} live={subject.live} note={note} chooser={chooser} />;
   }
   if (subject.kind === 'transistor') {
     return <TransistorView label={subject.label} live={subject.live} note={note} chooser={chooser} />;

@@ -38,7 +38,7 @@ const rating = (spec: SwitchSpec) =>
 
 /** A wire's resistance at room temperature, from its length, copper and its size: what the circuit uses for it. */
 /** The parts the 3D view can show, linked to the one selected. */
-const IN_3D: ReadonlySet<PlacedPart['kind']> = new Set(['knob', 'capacitor', 'transistor']);
+const IN_3D: ReadonlySet<PlacedPart['kind']> = new Set(['knob', 'capacitor', 'transistor', 'esp32']);
 
 /** A transistor's ratings, as one line: collector current, collector-emitter voltage, heat. */
 const TRANSISTOR_LIMITS = [

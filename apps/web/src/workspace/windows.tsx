@@ -279,11 +279,12 @@ export function SpecWindow() {
 const Viewer3d = lazy(() => import('../three/Viewer3d'));
 
 /** The parts that have a 3D model so far. */
-type Modelled = 'knob' | 'capacitor' | 'transistor';
+type Modelled = 'knob' | 'capacitor' | 'transistor' | 'esp32';
 const MODELLED: readonly { readonly kind: Modelled; readonly name: string }[] = [
   { kind: 'knob', name: 'Knob' },
   { kind: 'capacitor', name: 'Capacitor' },
   { kind: 'transistor', name: 'Transistor' },
+  { kind: 'esp32', name: 'ESP32' },
 ];
 const isModelled = (kind: string | undefined): kind is Modelled => MODELLED.some((m) => m.kind === kind);
 
@@ -319,8 +320,11 @@ function View3d() {
   const kind = linkedKind ?? looseKind;
 
   const transistor = reading?.written ? reading.transistor : undefined;
+  const chip = reading?.written ? reading.chip : undefined;
   const subject: Subject =
-    kind === 'transistor'
+    kind === 'esp32'
+      ? { kind, label: linked?.label, live: chip && { pins: chip.pins, supplyAmps: chip.supplyAmps } }
+      : kind === 'transistor'
       ? {
           kind,
           label: linked?.label,
