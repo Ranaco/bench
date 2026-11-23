@@ -2,7 +2,6 @@ import {
   arduino,
   Capacitor,
   Circuit,
-  Gpio,
   GROUND,
   NotWrittenYet,
   PN2222A,
@@ -11,12 +10,11 @@ import {
   Switch,
   TICK,
   Transistor,
-  type Node,
   type Program,
 } from '@bench/engine';
 import { describe, expect, it } from 'vitest';
 import { addWire, EMPTY_BOARD, removePart, removeWire, setProp, type Board } from '../builder/board';
-import { ledLoop, place } from '../builder/fixtures';
+import { gpioWritten, ledLoop, place } from '../builder/fixtures';
 import { METER_START, type MeterState } from '../builder/meter';
 import { BoardSim } from '../builder/sync';
 import { A_KNOB, CAPACITORS, LIGHT_AN_LED, MICROCONTROLLER, SWITCHES_AND_BUTTONS, TRANSISTORS, type Lesson } from './lessons';
@@ -663,35 +661,6 @@ describe.runIf(transistorWritten)('Lesson 5: Transistors', () => {
 if (!transistorWritten) {
   it.todo('Lesson 5: needs your transistor, in packages/engine/src/lesson-5-transistors/transistor.ts');
 }
-
-/** Lesson 6 needs your GPIO pin (packages/engine/src/lesson-6-microcontroller/gpio.ts): all three of its jobs. */
-const gpioWritten = (() => {
-  const pin = new Gpio('U1', 1 as Node, 2 as Node, 3 as Node);
-  pin.mode = 'pullup';
-  const atRest = { time: 0, dt: TICK, ambient: 25, voltage: () => 0, across: () => 0, branchCurrent: () => 0 };
-  let stamped = 0;
-  try {
-    pin.stamp({
-      time: 0,
-      dt: TICK,
-      ambient: 25,
-      internal: () => GROUND,
-      conductance: () => {
-        stamped++;
-      },
-      currentSource: () => undefined,
-      voltageSource: () => 0 as never,
-      junction: () => undefined,
-      controlledCurrent: () => undefined,
-    });
-    pin.read(0, 0);
-    pin.current(atRest);
-    return stamped > 0;
-  } catch (error) {
-    if (error instanceof NotWrittenYet) return false;
-    throw error;
-  }
-})();
 
 const sixStep = (done: ReadonlySet<string>) => currentStep(MICROCONTROLLER, done)?.id;
 

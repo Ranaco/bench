@@ -1,4 +1,4 @@
-import { SingularMatrix, solveInPlace } from './linear';
+import { SingularMatrix, solveAllInPlace, solveInPlace } from './linear';
 import {
   AMBIENT_CELSIUS,
   GROUND,
@@ -261,12 +261,17 @@ export class Circuit {
    * settled on. Infinity before the first solve, or when nothing connects them but the solver's own leak to ground.
    */
   resistanceBetween(a: Node, b: Node): number {
+    return this.resistancesBetween([[a, b]])[0] ?? Infinity;
+  }
+
+  /** resistanceBetween() for several pairs at once, for the cost of little more than one. */
+  resistancesBetween(pairs: readonly (readonly [Node, Node])[]): number[] {
     const last = this.last;
-    if (!last) return Infinity;
+    if (!last) return pairs.map(() => Infinity);
     try {
-      return last.assembly.resistance(last.nodeCount, a, b);
+      return last.assembly.resistances(last.nodeCount, pairs);
     } catch (error) {
-      if (error instanceof SingularMatrix) return Infinity;
+      if (error instanceof SingularMatrix) return pairs.map(() => Infinity);
       throw error;
     }
   }
@@ -607,13 +612,20 @@ class Assembly implements Stamp {
    * `a` and out at `b`.
    */
   resistance(nodes: number, a: Node, b: Node): number {
-    if (a === b) return 0;
+    return this.resistances(nodes, [[a, b]])[0] ?? Infinity;
+  }
+
+  /** The same for several pairs of nodes, from one elimination: a pin per pair, a microcontroller's worth at once. */
+  resistances(nodes: number, pairs: readonly (readonly [Node, Node])[]): number[] {
     const { matrix, size } = this.equations(nodes);
-    const push = new Float64Array(size);
-    if (a !== GROUND) push[a - 1] += 1;
-    if (b !== GROUND) push[b - 1] -= 1;
-    const volts = solveInPlace(matrix, push, size);
-    return voltageIn(volts, a) - voltageIn(volts, b);
+    const pushes = pairs.map(([a, b]) => {
+      const push = new Float64Array(size);
+      if (a !== GROUND) push[a - 1] += 1;
+      if (b !== GROUND) push[b - 1] -= 1;
+      return push;
+    });
+    const volts = solveAllInPlace(matrix, pushes, size);
+    return pairs.map(([a, b], i) => (a === b ? 0 : voltageIn(volts[i] ?? new Float64Array(), a) - voltageIn(volts[i] ?? new Float64Array(), b)));
   }
 
   /** The equations for one solve: a matrix of conductances and voltage-source rows, and what's pushed into each. */

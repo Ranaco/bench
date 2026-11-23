@@ -2,8 +2,8 @@
  * An ESP32 in a circuit, running a program: your GPIO pin, Bench's chip and the program runner together. These wait
  * for all three of your pin's jobs.
  */
-import { describe, expect, it } from 'vitest';
-import { Circuit, Esp32, Gpio, Machine, ProgramRunner, Resistor, Switch, TACT_SWITCH, type Node, type Program } from '../../src/index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Circuit, Esp32, Gpio, Machine, NotWrittenYet, ProgramRunner, Resistor, Switch, TACT_SWITCH, type Node, type Program, type Stamp } from '../../src/index';
 import {
   analogRead,
   delay,
@@ -171,3 +171,41 @@ describe.runIf(gpioWritten)('An ESP32 running a program', () => {
 });
 
 if (!gpioWritten) it.todo('An ESP32 running a program: needs your GPIO pin, in packages/engine/src/lesson-6-microcontroller/gpio.ts');
+
+/**
+ * Whatever's in your pin, the program waits for all three of its jobs. Here they're stood in for (a plain 1 MΩ to GND,
+ * reading LOW: nothing like the real pin) so only current() is missing, then not.
+ */
+describe('A part-written pin', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('holds the program back until current() is written too, and names it', async () => {
+    vi.spyOn(Gpio.prototype, 'stamp').mockImplementation(function (this: Gpio, s: Stamp) {
+      s.conductance(this.pin, this.gnd, 1e-6);
+    });
+    vi.spyOn(Gpio.prototype, 'read').mockReturnValue('low');
+    const current = vi.spyOn(Gpio.prototype, 'current').mockImplementation(function (this: Gpio) {
+      throw new NotWrittenYet(this.name, 'gpio.ts');
+    });
+    let started = 0;
+    const { machine } = board({
+      setup() {
+        started++;
+      },
+      async loop() {
+        await delay(100);
+      },
+    });
+    await run(machine, 0.05);
+    expect(started).toBe(0);
+    expect(machine.unwritten().map((m) => m.method)).toEqual(['current']);
+
+    current.mockReturnValue(0);
+    await run(machine, 0.05);
+    expect(machine.unwritten()).toEqual([]);
+    expect(started).toBe(1);
+    expect(machine.failure).toBeUndefined();
+  });
+});

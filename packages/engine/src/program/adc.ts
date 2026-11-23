@@ -1,18 +1,25 @@
 /**
  * The ESP32's analog-to-digital converter, as Espressif's own driver describes it: ESP-IDF v5.3,
- * components/esp_adc/esp32/adc_cali_line_fitting.c (Apache-2.0). Arduino's analogRead() reads it at its widest
- * range (12 dB attenuation) as a 12-bit number, 0 to 4095.
+ * components/esp_adc/esp32/adc_cali_line_fitting.c (Apache-2.0).
  *
- * The driver turns a reading into millivolts: on a straight line up to reading 2880, and above that, where the
- * converter bends, from two measured lookup tables. A chip with no calibration burned in is taken to have the nominal
- * 1100 mV reference, and so is this one. Bench runs that the other way: for a voltage, the reading the driver expects.
- * A real chip's readings also wander by up to ±60 mV over its middle range (ESP32 datasheet v5.3, the ADC table);
- * Bench's don't.
+ * Arduino's analogRead() gives the converter's raw 12-bit number, 0 to 4095, at attenuation 3, the widest of its four
+ * ranges: arduino-esp32's esp32-hal-adc.c starts every pin there (`__analogAttenuation = ADC_11db`). The datasheet
+ * gives that range as 150 to 2450 mV (ESP32 datasheet v5.3, Table 4-4).
+ *
+ * The driver's calibration turns a raw number into millivolts: on a straight line up to 2880, and above that, where
+ * the converter bends, from two measured lookup tables. Where its line sits depends on the chip's reference voltage,
+ * which each chip's eFuse records as a difference from the driver's "ideal" 1100 mV. Bench's chip is exactly ideal,
+ * and runs the calibration the other way: for a voltage, the raw number the driver would turn back into it.
+ *
+ * Real chips aren't all ideal. Uncalibrated, their readings differ by up to ±6% from one chip to another; calibrated
+ * with their eFuse reference, they're within ±60 mV over 150 to 2450 mV (datasheet v5.3, section 4.9.1 and Table
+ * 4-4). Bench reads as the ideal chip, every time.
  */
 
 /** Which converter a pin is on: ADC1 (GPIO 32 to 39) or ADC2. */
 export type AdcUnit = 1 | 2;
 
+/** The driver's "ideal" reference, mV: each chip's eFuse records its own difference from it (in 7 mV steps). */
 const VREF = 1100;
 const SCALE = 65536;
 const STEP = 64;

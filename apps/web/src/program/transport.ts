@@ -12,8 +12,8 @@ export const WATCHDOG_MS = 3000;
 export class WorkerTransport implements ProgramTransport {
   private worker: Worker | undefined = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   private state: RunnerState = FRESH;
-  /** How long each round trip took, ms, the last few: for the Serial Monitor to say if the page can't keep up. */
-  readonly trips: number[] = [];
+  /** Ends the resume in flight, if there is one: for stop(). */
+  private abandon: (() => void) | undefined;
 
   due(millis: number): boolean {
     return this.worker !== undefined && isDue(this.state, millis);
@@ -22,10 +22,16 @@ export class WorkerTransport implements ProgramTransport {
   resume(snapshot: Snapshot): Promise<Writes> {
     const worker = this.worker;
     if (!worker) return Promise.reject(new ProgramMistake('Your program was stopped.'));
-    const sent = performance.now();
     return new Promise<Writes>((resolve, reject) => {
+      this.abandon = () => {
+        window.clearTimeout(watchdog);
+        worker.onmessage = null;
+        reject(new ProgramMistake('Your program was stopped.'));
+      };
       const watchdog = window.setTimeout(() => {
         worker.onmessage = null;
+        // Its own reason, below, not stop()'s "was stopped".
+        this.abandon = undefined;
         this.stop();
         reject(
           new ProgramMistake(
@@ -36,8 +42,7 @@ export class WorkerTransport implements ProgramTransport {
       worker.onmessage = (event: MessageEvent<FromWorker>) => {
         window.clearTimeout(watchdog);
         worker.onmessage = null;
-        this.trips.push(performance.now() - sent);
-        if (this.trips.length > 50) this.trips.shift();
+        this.abandon = undefined;
         this.state = event.data.state;
         if ('error' in event.data) {
           const { name, message } = event.data.error;
@@ -50,9 +55,12 @@ export class WorkerTransport implements ProgramTransport {
     });
   }
 
-  /** Stops the program for good: its worker is gone. */
+  /** Stops the program for good: its worker is gone, and a resume still waiting on it ends now, not at the watchdog. */
   stop(): void {
+    const abandon = this.abandon;
+    this.abandon = undefined;
     this.worker?.terminate();
     this.worker = undefined;
+    abandon?.();
   }
 }

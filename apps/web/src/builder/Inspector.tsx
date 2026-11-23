@@ -374,7 +374,8 @@ function Readings(props: {
       rows.push(['Out of its 3.3 V supply', amps(chip.supplyAmps)]);
       const idle: string[] = [];
       for (const pin of Object.values(chip.pins)) {
-        // A plain input with nothing holding it: not worth a row of its own.
+        // A plain input nothing holds (bare, or wired to something that doesn't: an open button, an LED that's off):
+        // not worth a row of its own.
         if (pin.mode === 'input' && pin.floating) {
           idle.push(`GPIO${String(pin.gpio)}`);
           continue;
@@ -385,7 +386,7 @@ function Readings(props: {
         const current = pin.mode === 'input' || pin.amps === undefined ? '' : ` · ${amps(pin.amps)}`;
         rows.push([`GPIO${String(pin.gpio)}`, `${MODE_TEXT[pin.mode]} · ${level} · ${at}${analog}${current}`]);
       }
-      if (idle.length > 0) rows.push(['Not connected', idle.join(', ')]);
+      if (idle.length > 0) rows.push(['Floating inputs', idle.join(', ')]);
       break;
     }
     case 'transistor': {

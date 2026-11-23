@@ -2451,6 +2451,12 @@ kbd {
   height: auto;
 }
 
+/* The log keeps a height of its own in the column, and scrolls inside it, newest at the bottom. */
+.stack-card .serial-log {
+  flex: none;
+  height: 240px;
+}
+
 .stack-3d .pane {
   height: 75vh;
   margin-top: 12px;

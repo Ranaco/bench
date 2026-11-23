@@ -502,23 +502,24 @@ export class BoardSim {
     else this.quietSince ??= now;
   }
 
-  /** An ESP32's pins over time: each one's voltage, its level changes while reading, and its analog range. */
+  /**
+   * An ESP32's pins over time: each one's voltage, its level changes while reading, and its analog range. A floating
+   * pin's voltage means nothing, so it leaves a gap in the trace and counts towards nothing.
+   */
   private trackChip(id: string, chip: Esp32, now: number): void {
     const c = this.circuit;
-    for (const { id: pinId, gpio: number } of ESP32_GPIOS) {
-      const gpio = chip.pins.get(number);
-      if (!gpio) continue;
+    for (const { id: pinId, gpio: number, gpioPart: gpio, volts, ohms, floating } of chipPins(chip, c)) {
       const key = `${id}.${pinId}`;
-      const volts = c.across(gpio.pin, chip.gnd);
       let trace = this.pinTraces.get(key);
       if (!trace) {
         trace = { times: [], volts: [] };
         this.pinTraces.set(key, trace);
       }
-      if (trace.times.at(-1) === now) trace.volts[trace.volts.length - 1] = volts;
+      const shown = floating ? Number.NaN : volts;
+      if (trace.times.at(-1) === now) trace.volts[trace.volts.length - 1] = shown;
       else {
         trace.times.push(now);
-        trace.volts.push(volts);
+        trace.volts.push(shown);
       }
       const oldest = trace.times.findIndex((t) => t >= now - PIN_TRACE_SECONDS);
       if (oldest > 0) {
@@ -526,13 +527,13 @@ export class BoardSim {
         trace.volts.splice(0, oldest);
       }
       if (gpio.mode !== 'output') {
-        const level = readLevel(chip, number, c);
+        const level = attempt(() => gpio.read(volts, ohms));
         const seen = this.pinChanges.get(key) ?? { level: undefined, changes: 0 };
         const changed = level !== undefined && level !== 'unknown' && seen.level !== undefined && seen.level !== 'unknown' && level !== seen.level;
         this.pinChanges.set(key, { level, changes: seen.changes + (changed ? 1 : 0) });
       }
       const unit = ESP32_ADC[number];
-      if (unit !== undefined) {
+      if (unit !== undefined && !floating) {
         const value = adcReading(volts, unit);
         const range = this.analogSeen.get(key);
         this.analogSeen.set(key, range ? [Math.min(range[0], value), Math.max(range[1], value)] : [value, value]);
@@ -682,22 +683,22 @@ export class BoardSim {
       const pins: Record<string, ChipPin> = {};
       let over = false;
       const readings = readingsOf(c);
-      for (const { id: pinId, gpio: number } of ESP32_GPIOS) {
-        const gpio = part.pins.get(number);
-        if (!gpio) continue;
+      for (const { id: pinId, gpio: number, gpioPart: gpio, volts: measured, ohms, floating: adrift } of chipPins(part, c)) {
         const key = `${live.doc.id}.${pinId}`;
-        const volts = failed ? 0 : c.across(gpio.pin, part.gnd);
+        const volts = failed ? 0 : measured;
+        const floating = failed || adrift;
         const amps = written && !failed ? attempt(() => gpio.current(readings)) : undefined;
         const spec = gpio.spec;
-        const floating = failed || spec.leakAmps * c.resistanceBetween(gpio.pin, part.gnd) > spec.supplyVolts;
         const unit = ESP32_ADC[number];
-        // Past the datasheet: more than its typical drive current, or a voltage outside what a pin may be given.
-        if ((amps ?? 0) > spec.sourceAmps || (amps ?? 0) < -spec.sinkAmps || volts > spec.maxVolts || volts < -0.3) over = true;
+        // Past the datasheet: more than its typical drive current, or (on a pin something's holding) a voltage outside
+        // what a pin may be given. A floating pin's voltage means nothing, so it can't be over.
+        const outside = !floating && (volts > spec.maxVolts || volts < -0.3);
+        if ((amps ?? 0) > spec.sourceAmps || (amps ?? 0) < -spec.sinkAmps || outside) over = true;
         pins[pinId] = {
           gpio: number,
           mode: gpio.mode,
           high: gpio.high,
-          level: written && !failed ? readLevel(part, number, c) : undefined,
+          level: written && !failed ? attempt(() => gpio.read(volts, ohms)) : undefined,
           volts,
           amps,
           changes: this.pinChanges.get(key)?.changes ?? 0,
@@ -776,11 +777,21 @@ function attempt<T>(run: () => T): T | undefined {
   }
 }
 
-/** What an ESP32 pin reads right now, by your pin's read(); undefined while that isn't written. */
-function readLevel(chip: Esp32, number: number, c: Circuit): Level | undefined {
-  const gpio = chip.pins.get(number);
-  if (!gpio) return undefined;
-  return attempt(() => gpio.read(c.across(gpio.pin, chip.gnd), c.resistanceBetween(gpio.pin, chip.gnd)));
+/**
+ * Each of the board's GPIO pins as the circuit stands: its voltage against the chip's GND, the resistance holding it
+ * there (all from one elimination), and whether nothing is: its 50 nA of leak could move it further than the supply.
+ */
+function chipPins(chip: Esp32, c: Circuit) {
+  const pins = ESP32_GPIOS.flatMap((p) => {
+    const gpioPart = chip.pins.get(p.gpio);
+    return gpioPart ? [{ ...p, gpioPart }] : [];
+  });
+  const ohmsOf = c.resistancesBetween(pins.map((p) => [p.gpioPart.pin, chip.gnd] as const));
+  return pins.map((p, i) => {
+    const ohms = ohmsOf[i] ?? Infinity;
+    const { leakAmps, supplyVolts } = p.gpioPart.spec;
+    return { ...p, volts: c.across(p.gpioPart.pin, chip.gnd), ohms, floating: leakAmps * ohms > supplyVolts };
+  });
 }
 
 // When a part model or the engine changes, start the page fresh: the live circuit holds parts built from the old code.

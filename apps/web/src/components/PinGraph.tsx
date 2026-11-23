@@ -54,8 +54,20 @@ export function PinGraph({ rows, now, span, supply, highAbove, lowBelow }: PinGr
               </clipPath>
             </defs>
             {rows.map((row, i) => {
+              // A floating stretch (no voltage worth drawing) breaks the line: the next point starts afresh.
+              let gap = true;
               const line = row.times
-                .map((t, k) => `${k === 0 ? 'M' : 'L'}${n(x(t))},${n(yIn(i, row.volts[k] ?? 0))}`)
+                .map((t, k) => {
+                  const volts = row.volts[k] ?? Number.NaN;
+                  if (!Number.isFinite(volts)) {
+                    gap = true;
+                    return '';
+                  }
+                  const step = `${gap ? 'M' : 'L'}${n(x(t))},${n(yIn(i, volts))}`;
+                  gap = false;
+                  return step;
+                })
+                .filter(Boolean)
                 .join(' ');
               return (
                 <g key={row.name}>

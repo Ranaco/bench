@@ -41,16 +41,25 @@ export class Machine {
     readonly adc: Readonly<Partial<Record<number, AdcUnit>>> = {},
   ) {}
 
-  /** The jobs on your pin that stop the program running: its stamp(), its read() (current() only shows readings). */
+  /**
+   * The jobs on your pin still to write: until all three are, the program doesn't run. The circuit only ever calls
+   * stamp(); read() and current() are tried here, so the your-turn card can name them.
+   */
   unwritten(): Unwritten[] {
     const missing: Unwritten[] = this.circuit.notWritten.filter((m) => m.part === this.chip.name);
     const gpio = this.chip.pins.values().next().value;
     if (!gpio) return missing;
-    try {
-      gpio.read(0, 0);
-    } catch (error) {
-      if (!(error instanceof NotWrittenYet)) throw error;
-      missing.push({ part: this.chip.name, method: 'read', file: error.file });
+    const atRest = { time: 0, dt: TICK, ambient: 25, voltage: () => 0, across: () => 0, branchCurrent: () => 0 };
+    for (const [method, run] of [
+      ['read', () => gpio.read(0, 0)],
+      ['current', () => gpio.current(atRest)],
+    ] as const) {
+      try {
+        run();
+      } catch (error) {
+        if (!(error instanceof NotWrittenYet)) throw error;
+        missing.push({ part: this.chip.name, method, file: error.file });
+      }
     }
     return missing;
   }
@@ -77,9 +86,12 @@ export class Machine {
   snapshot(millis: number): Snapshot {
     const pins: Record<number, Snapshot['pins'][number]> = {};
     const analog: Record<number, number> = {};
-    for (const [number, gpio] of this.chip.pins) {
+    const gpios = [...this.chip.pins];
+    // Every pin's resistance to the chip's GND, from one elimination.
+    const ohmsOf = this.circuit.resistancesBetween(gpios.map(([, gpio]) => [gpio.pin, this.chip.gnd] as const));
+    for (const [i, [number, gpio]] of gpios.entries()) {
       const volts = this.circuit.across(gpio.pin, this.chip.gnd);
-      const ohms = this.circuit.resistanceBetween(gpio.pin, this.chip.gnd);
+      const ohms = ohmsOf[i] ?? Infinity;
       pins[number] = { level: gpio.read(volts, ohms), volts, inputOnly: this.chip.inputOnly.has(number) };
       const unit = this.adc[number];
       if (unit !== undefined) analog[number] = adcReading(volts, unit);
