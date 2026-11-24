@@ -1,4 +1,4 @@
-import { GROUND, KNOB_10K, Potentiometer } from '@bench/engine';
+import { GROUND, KNOB_10K, Potentiometer, type ModuleClasses } from '@bench/engine';
 import { invalidate } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import * as THREE from 'three';
@@ -26,14 +26,16 @@ export interface KnobViewProps {
   readonly note?: string;
   readonly live: KnobLive | undefined;
   readonly chooser?: ReactNode;
+  /** The code the knob runs, for its legs: Bench's default unless given. */
+  readonly potentiometer?: ModuleClasses['potentiometer'];
 }
 
 const ohms = (value: number) => formatSI(value, 'Ω', { trim: true });
 const tinted = (color: string) => ({ '--tint': color }) as CSSProperties;
 
-/** The two pieces of the track, by your model's own legs() (written for you, so this works before stamp is). */
-function legsAt(turn: number): readonly [number, number] {
-  return new Potentiometer('3D', GROUND, GROUND, GROUND, turn).legs();
+/** The two pieces of the track, by the knob's own legs() (written for you in its lesson, so this works before stamp is). */
+function legsAt(turn: number, potentiometer: ModuleClasses['potentiometer'] = Potentiometer): readonly [number, number] {
+  return new potentiometer('3D', GROUND, GROUND, GROUND, turn).legs();
 }
 
 /** A drag that's turning the shaft: where it started, and how it's being measured. */
@@ -55,7 +57,7 @@ interface Turning {
 const degreesAt = (x: number, y: number, cx: number, cy: number) => (Math.atan2(y - cy, x - cx) * 180) / Math.PI;
 
 /** The knob in 3D: turn it by its shaft, take it apart, and look at every piece. */
-export function KnobView({ turn, onTurn, label, note, live, chooser }: KnobViewProps) {
+export function KnobView({ turn, onTurn, label, note, live, chooser, potentiometer }: KnobViewProps) {
   const model = useMemo(() => buildKnob(), []);
   useEffect(() => () => {
     model.dispose();
@@ -134,7 +136,7 @@ export function KnobView({ turn, onTurn, label, note, live, chooser }: KnobViewP
     };
   }, [model]);
 
-  const legs = legsAt(turn);
+  const legs = legsAt(turn, potentiometer);
   const labels: StageLabel[] = [];
   for (const [n, id] of (['pin1', 'pin2', 'pin3'] as const).entries()) {
     if (!part.hidden.has(id)) labels.push({ key: id, anchor: model.anchors[id], text: String(n + 1) });

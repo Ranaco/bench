@@ -3,7 +3,7 @@
  * for all three of your pin's jobs.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Circuit, Esp32, Gpio, Machine, NotWrittenYet, ProgramRunner, Resistor, Switch, TACT_SWITCH, type Node, type Program, type Stamp } from '../../src/index';
+import { Circuit, Esp32, Gpio, Machine, Machines, NotWrittenYet, ProgramRunner, Resistor, Switch, TACT_SWITCH, type Node, type Program, type Stamp } from '../../src/index';
 import {
   analogRead,
   delay,
@@ -63,6 +63,19 @@ const BLINK: Program = {
   },
 };
 
+/** GPIO2 switched every 2 ms: faster than a screen draws, or an eye can follow. */
+const FAST: Program = {
+  setup() {
+    pinMode(2, OUTPUT);
+  },
+  async loop() {
+    digitalWrite(2, HIGH);
+    await delay(2);
+    digitalWrite(2, LOW);
+    await delay(2);
+  },
+};
+
 describe.runIf(gpioWritten)('An ESP32 running a program', () => {
   it('blinks: the pin goes HIGH and LOW every 500 ms of the circuit’s time', async () => {
     const { c, gnd, pins, machine } = board(BLINK);
@@ -85,6 +98,41 @@ describe.runIf(gpioWritten)('An ESP32 running a program', () => {
       ends.push(`${machine.serial}|${c.across(pins[2], gnd).toFixed(9)}|${c.time.toFixed(3)}`);
     }
     expect(new Set(ends).size).toBe(1);
+  });
+
+  it('shows each pin as the circuit was last solved with it, between ticks, even switching every 2 ms', async () => {
+    const { c, gnd, pins, chip, machine } = board(FAST);
+    c.add(new Resistor('R1', pins[2], gnd, 330));
+    const gpio = chip.pins.get(2);
+    let highs = 0;
+    for (let frame = 0; frame < 60; frame++) {
+      await machine.step(1 / 60);
+      const volts = c.across(pins[2], gnd);
+      // A frame often ends on a tick the program ran in: what it wrote waits for the next solve, so it can't show yet.
+      expect(volts > 1.65).toBe(gpio?.high);
+      if (gpio?.high) highs++;
+    }
+    expect(highs).toBeGreaterThan(10);
+    expect(highs).toBeLessThan(50);
+  });
+
+  it('averages each pin over the ticks since it was last asked, as a meter does: half HIGH at 2 ms on, 2 ms off', async () => {
+    const { c, gnd, pins, machine } = board(FAST);
+    c.add(new Resistor('R1', pins[2], gnd, 330));
+    await run(machine, 0.1);
+    machine.takeAverages(); // from here
+    await run(machine, 0.25);
+    const averages = machine.takeAverages();
+    const pin = averages?.pins.get(2);
+    const on = (3.3 * 330) / (330 + 16.5); // driving HIGH into 330 Ω, through the driver's 16.5 Ω
+    expect(averages?.seconds).toBeCloseTo(0.25, 2);
+    expect(pin?.highShare).toBeCloseTo(0.5, 1);
+    expect(pin?.volts).toBeCloseTo(on / 2, 1);
+    expect(pin?.amps).toBeCloseTo(on / 330 / 2, 3);
+    expect(averages?.supplyAmps).toBeCloseTo(on / 330 / 2, 3); // all of it, out of the 3V3 supply
+    expect(pin?.switches).toBeGreaterThan(100); // HIGH and LOW 62 times each in 250 ms
+    expect(averages?.pins.get(4)?.highShare).toBe(0); // an input never drives
+    expect(machine.takeAverages()).toBeUndefined(); // no ticks since
   });
 
   it('never runs the program on a solve that doesn’t move time on', async () => {
@@ -207,5 +255,53 @@ describe('A part-written pin', () => {
     expect(machine.unwritten()).toEqual([]);
     expect(started).toBe(1);
     expect(machine.failure).toBeUndefined();
+  });
+});
+
+describe('Two ESP32s on one circuit', () => {
+  /** A blink on GPIO2 every `ms`, printing its name each time it goes HIGH. */
+  const blink = (name: string, ms: number): Program => ({
+    setup() {
+      pinMode(2, OUTPUT);
+    },
+    async loop() {
+      digitalWrite(2, HIGH);
+      Serial.println(name);
+      await delay(ms);
+      digitalWrite(2, LOW);
+      await delay(ms);
+    },
+  });
+
+  it('runs each one’s own program, side by side, with one solve per tick for both', async () => {
+    const c = new Circuit();
+    const chip = (label: string) => {
+      const vdd = c.node(`${label}.3V3`);
+      const gnd = c.node(`${label}.GND`);
+      const pin = c.node(`${label}.GPIO2`);
+      const esp = c.add(new Esp32(label, vdd, gnd, { 2: pin }));
+      c.add(new Resistor(`R${label}`, pin, gnd, 330));
+      return { esp, gnd, pin };
+    };
+    const u1 = chip('U1');
+    const u2 = chip('U2');
+    const m1 = new Machine(c, u1.esp, new ProgramRunner(blink('one', 100)));
+    const m2 = new Machine(c, u2.esp, new ProgramRunner(blink('two', 300)));
+    const both = new Machines(c);
+    both.add(m1);
+    both.add(m2);
+    let highs1 = 0;
+    let highs2 = 0;
+    for (let t = 0; t < 1.2; t += 0.05) {
+      await both.step(0.05);
+      if (c.across(u1.pin, u1.gnd) > 1.65) highs1++;
+      if (c.across(u2.pin, u2.gnd) > 1.65) highs2++;
+    }
+    expect(m1.serial.split('\n').filter(Boolean)).toHaveLength(6); // HIGH every 200 ms for 1.2 s
+    expect(m2.serial.split('\n').filter(Boolean)).toHaveLength(2); // every 600 ms
+    expect(m1.serial).not.toContain('two');
+    expect(highs1).toBeGreaterThan(0);
+    expect(highs2).toBeGreaterThan(0);
+    expect(c.time).toBeCloseTo(1.2, 3);
   });
 });

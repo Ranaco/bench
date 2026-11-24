@@ -23,6 +23,7 @@ class SilentWorker {
 }
 
 const SNAPSHOT: Snapshot = { millis: 1, pins: {}, analog: {}, supplyVolts: 3.3 };
+const PROGRAM = { text: 'export function loop() {}', file: 'U1.ts' };
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -37,7 +38,7 @@ afterEach(() => {
 
 describe('Your program in a worker', () => {
   it('ends a step still waiting on the worker as soon as it’s stopped, not at the watchdog', async () => {
-    const transport = new WorkerTransport();
+    const transport = new WorkerTransport(PROGRAM);
     const step = transport.resume(SNAPSHOT);
     transport.stop();
     await expect(step).rejects.toThrow('Your program was stopped.');
@@ -46,7 +47,7 @@ describe('Your program in a worker', () => {
   });
 
   it('stops one that never answers at the watchdog, saying why', async () => {
-    const transport = new WorkerTransport();
+    const transport = new WorkerTransport(PROGRAM);
     const step = transport.resume(SNAPSHOT);
     const caught = expect(step).rejects.toThrow(/without reaching a delay\(\)/);
     vi.advanceTimersByTime(WATCHDOG_MS);

@@ -2,6 +2,7 @@ import { Battery, Circuit, GROUND, JUMPER, Led, RED_LED, Resistor, THERMAL_VOLTA
 import { describe, expect, it } from 'vitest';
 import { SUPPLIES } from '../kit';
 import {
+  addPart,
   connect,
   splitWire,
   type Board,
@@ -23,7 +24,7 @@ import { CATALOG, GRID, pinAt } from './catalog';
 import { boxBetween, inBox, partBox, routeBetween, simplify, tapPoint, wireRoute } from './route';
 import { parseBoard } from './save';
 import { ledLoop, partOf, place, run } from './fixtures';
-import { BoardSim } from './sync';
+import { BoardSim } from '../sim';
 
 const NINE_VOLT = SUPPLIES[2];
 
@@ -514,5 +515,15 @@ describe('taps', () => {
         expect(simplify([...first, ...second.slice(1)]), `${wire.label} cut at ${String(point.x)},${String(point.y)}`).toEqual(route);
       }
     }
+  });
+});
+
+describe('Pasting parts', () => {
+  it('says which new part is a copy of which, so what’s kept beside the board can follow', () => {
+    const chip = addPart(EMPTY_BOARD, 'esp32', 0, 0, CATALOG.esp32.defaults);
+    const led = addPart(chip.board, 'led', 200, 0, CATALOG.led.defaults);
+    const pasted = pasteClip(led.board, copyParts(led.board, [chip.id, led.id]), 40, 40);
+    expect([...pasted.renamed.keys()].sort()).toEqual([chip.id, led.id].sort());
+    expect(new Set(pasted.renamed.values())).toEqual(new Set(pasted.parts));
   });
 });

@@ -1,8 +1,8 @@
 /** Boards for tests: the LED loop every lesson starts from, and helpers to run them. */
-import { Gpio, GROUND, NotWrittenYet, TICK, type Node } from '@bench/engine';
+import { arduino, Gpio, GROUND, NotWrittenYet, ProgramRunner, TICK, type Node, type Program } from '@bench/engine';
 import { EMPTY_BOARD, addPart, addWire, type Board, type PartKind } from './board';
 import { CATALOG } from './catalog';
-import type { BoardSim } from './sync';
+import { BoardSim } from '../sim';
 
 export function place(board: Board, kind: PartKind, x = 0, y = 0, props = CATALOG[kind].defaults) {
   return addPart(board, kind, x, y, props);
@@ -24,6 +24,34 @@ export function ledLoop(ohms: number) {
   board = addWire(board, { part: led.id, pin: 'cathode' }, { part: battery.id, pin: 'minus' });
   board = addWire(board, { part: battery.id, pin: 'minus' }, { part: ground.id, pin: 'pin' });
   return { board, battery: battery.id, resistor: resistor.id, led: led.id, ground: ground.id };
+}
+
+/**
+ * An ESP32 switching an LED (through 330 Ω) from GPIO2, on this thread: on for `onMs`, off for `offMs`, over and over.
+ * `wire` is the one from the resistor to the LED.
+ */
+export function pwmBoard(onMs: number, offMs: number) {
+  const chip = place(EMPTY_BOARD, 'esp32');
+  const resistor = place(chip.board, 'resistor', 0, 0, { ohms: 330 });
+  const led = place(resistor.board, 'led');
+  let board = addWire(led.board, { part: chip.id, pin: 'gpio2' }, { part: resistor.id, pin: 'a' });
+  board = addWire(board, { part: resistor.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+  const wire = board.wires.at(-1)?.id ?? '';
+  board = addWire(board, { part: led.id, pin: 'cathode' }, { part: chip.id, pin: 'gnd2' });
+  const program: Program = {
+    setup() {
+      arduino.pinMode(2, arduino.OUTPUT);
+    },
+    async loop() {
+      arduino.digitalWrite(2, arduino.HIGH);
+      await arduino.delay(onMs);
+      arduino.digitalWrite(2, arduino.LOW);
+      await arduino.delay(offMs);
+    },
+  };
+  const sim = new BoardSim(() => new ProgramRunner(program));
+  sim.sync(board);
+  return { sim, board, chip: chip.id, resistor: resistor.id, led: led.id, wire };
 }
 
 export function partOf(sim: BoardSim, id: string) {

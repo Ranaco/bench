@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
-import type { ChipPin } from '../../builder/sync';
+import type { ChipPin } from '../../sim';
 import { formatSI } from '../../format';
 import { PartStage, type StageHandle, type StageLabel } from '../stage/PartStage';
 import { CommonTools, Shell } from '../stage/Shell';

@@ -1,7 +1,7 @@
 import { ENERGIZER_522, ENERGIZER_E91, ESP32_GPIO, KNOB_10K, QUARTER_WATT, RED_LED, SLIDE_SWITCH, TACT_SWITCH, UVR_25V } from '@bench/engine';
 import { describe, expect, it } from 'vitest';
 import { SUPPLIES } from '../kit';
-import { CAPACITOR_VALUES } from './catalog';
+import { CAPACITOR_VALUES } from '../kinds/capacitor/model';
 import { sheetFor, shown, type SpecSheet } from './specs';
 
 const values = (sheet: SpecSheet | undefined) => sheet?.sections.flatMap((s) => s.fields.map((f) => f.value)) ?? [];

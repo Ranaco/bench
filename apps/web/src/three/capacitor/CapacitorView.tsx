@@ -1,6 +1,6 @@
 import { UVR_25V } from '@bench/engine';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { CAPACITOR_VALUES } from '../../builder/catalog';
+import { CAPACITOR_VALUES } from '../../kinds/capacitor/model';
 import { formatSI } from '../../format';
 import { PartStage, type StageHandle, type StageLabel } from '../stage/PartStage';
 import { CommonTools, Shell } from '../stage/Shell';

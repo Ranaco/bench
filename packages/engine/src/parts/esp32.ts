@@ -1,4 +1,5 @@
-import { ESP32_GPIO, Gpio, type GpioSpec } from '../lesson-6-microcontroller/gpio';
+import { ESP32_GPIO, Gpio, type GpioSpec } from '../models/gpio/default';
+import type { GpioModel, ModuleClasses } from '../models/contracts';
 import type { Branch, Node, Part, Readings, Stamp } from '../types';
 
 /**
@@ -11,7 +12,7 @@ import type { Branch, Node, Part, Readings, Stamp } from '../types';
  */
 export class Esp32 implements Part {
   /** Each GPIO by its number: GPIO4 is pins.get(4). */
-  readonly pins: ReadonlyMap<number, Gpio>;
+  readonly pins: ReadonlyMap<number, GpioModel>;
   private branch = 0 as Branch;
 
   constructor(
@@ -27,8 +28,10 @@ export class Esp32 implements Part {
     readonly grounds: readonly Node[] = [],
     /** Pins that can only read (on an ESP32, GPIO34 to 39): no output driver, no pull-up or pull-down. */
     readonly inputOnly: ReadonlySet<number> = new Set(),
+    /** The code for one pin: yours from Lesson 6, or Bench's. */
+    gpio: ModuleClasses['gpio'] = Gpio,
   ) {
-    this.pins = new Map(Object.entries(gpios).map(([number, node]) => [Number(number), new Gpio(name, node, vdd, gnd, spec)]));
+    this.pins = new Map(Object.entries(gpios).map(([number, node]) => [Number(number), new gpio(name, node, vdd, gnd, spec)]));
   }
 
   stamp(s: Stamp): void {

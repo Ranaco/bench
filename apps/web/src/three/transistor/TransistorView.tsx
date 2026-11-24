@@ -1,6 +1,6 @@
 import { PN2222A } from '@bench/engine';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { TransistorState } from '../../builder/sync';
+import type { TransistorState } from '../../sim';
 import { formatSI } from '../../format';
 import { PartStage, type StageHandle, type StageLabel } from '../stage/PartStage';
 import { CommonTools, Shell } from '../stage/Shell';

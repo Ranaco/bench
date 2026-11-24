@@ -185,10 +185,22 @@ export class ProgramRunner {
         if (waiting) waiting.wake();
         else this.start(millis);
       });
-      while (outcome === 'returned' && this.due(millis)) {
-        outcome = await this.carryOn(() => {
-          this.start(millis);
-        });
+      // A delay(0) doesn't wait, as on a real chip, where it's over in microseconds. Bench's clock only moves in
+      // whole milliseconds, though, so a second one in the same millisecond waits for the next: a loop of them reads
+      // the pins once a millisecond, instead of never letting time pass.
+      let wokeAtOnce = false;
+      for (;;) {
+        const waiting = this.session.waiting;
+        if (outcome === 'returned' && this.due(millis)) {
+          outcome = await this.carryOn(() => {
+            this.start(millis);
+          });
+        } else if (outcome === 'parked' && waiting && waiting.until <= millis && !wokeAtOnce) {
+          wokeAtOnce = true;
+          outcome = await this.carryOn(() => {
+            waiting.wake();
+          });
+        } else break;
       }
       return host.writes;
     } finally {

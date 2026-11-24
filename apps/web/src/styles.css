@@ -629,6 +629,13 @@ input[type='range']:active::-webkit-slider-thumb {
   padding: 16px;
 }
 
+.serial-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .serial-status {
   margin: 0;
   font-size: 13px;
@@ -1404,6 +1411,9 @@ kbd {
 .readings dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  /* A value can ask for a second line (an ESP32 pin: what it's doing, then its numbers). */
+  white-space: pre-line;
 }
 
 .actions {
@@ -2774,6 +2784,355 @@ a.lesson-card:active {
   background: var(--text);
   transform: scaleX(var(--done));
   transform-origin: left;
+}
+
+/* The Code window: tabs for each piece of a part's code, what it runs, the editor, and saving */
+.pane-code {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.code-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.code-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.code-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.code-tab {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.code-tab[aria-selected='true'] {
+  border-color: var(--faint);
+  background: var(--fill);
+  color: var(--text);
+}
+
+.code-what {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.code-what strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.code-file {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+
+.code-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* From a chip's source back to its program: at the end of the tabs, apart from them. */
+.code-tabs .code-switch {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.code-actions,
+.code-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.code-actions .ghost,
+.code-foot .ghost,
+.code-confirm .ghost {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.code-foot {
+  justify-content: flex-end;
+}
+
+.code-vim {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.code-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.code-editor {
+  flex: 1;
+  min-height: 240px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.stack-card .code-editor {
+  flex: none;
+  height: 420px;
+}
+
+.code-problem {
+  margin: 0;
+}
+
+.code-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.code-parts .ghost {
+  width: 100%;
+  text-align: left;
+  font-size: 14px;
+}
+
+.code-parts strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Says when your code is paused: Bench stopped while running it last time */
+.paused-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--fill);
+  font-size: 14px;
+}
+
+.paused-bar p {
+  margin: 0;
+}
+
+/* Settings: one card per setting */
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.settings-card h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.settings-note {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.settings-note code,
+.home-hint code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.settings-toggle input {
+  margin-top: 4px;
+  accent-color: var(--text);
+}
+
+.settings-toggle > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--faint);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 14px;
+  outline: none;
+}
+
+.settings-row input:focus-visible {
+  border-color: var(--wire-live);
+}
+
+.home-hint a {
+  color: var(--muted);
+}
+
+/* Build's boards: a card to open each, with its actions beside it */
+.board-row {
+  position: relative;
+}
+
+.board-row > .lesson-card {
+  padding-right: 268px;
+}
+
+.board-new .lesson-number svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.board-mark {
+  font-weight: 500;
+}
+
+.lesson-card-title,
+.lesson-card-goal {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.board-actions {
+  position: absolute;
+  top: 0;
+  right: 14px;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.board-actions .ghost,
+.board-rename .ghost {
+  padding: 5px 10px;
+  font-size: 13px;
+  background: var(--surface);
+}
+
+.board-actions .ghost.danger {
+  border-color: rgb(255 69 58 / 0.4);
+  color: var(--red);
+}
+
+.board-confirm {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.board-rename {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-rename input,
+.crumb-input {
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--faint);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+.board-rename input {
+  flex: 1;
+  font-size: 16px;
+}
+
+.crumb-input {
+  max-width: 40vw;
+  padding: 2px 8px;
+  font-size: inherit;
+}
+
+.crumb-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: text;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .crumb-name:hover {
+    text-decoration: underline dotted var(--faint);
+    text-underline-offset: 4px;
+  }
+}
+
+@media (max-width: 560px) {
+  .board-row > .lesson-card {
+    padding-right: 16px;
+  }
+
+  .board-actions {
+    position: static;
+    justify-content: flex-end;
+    margin-top: 6px;
+  }
 }
 
 /* The workspace header's trail back to the menu */

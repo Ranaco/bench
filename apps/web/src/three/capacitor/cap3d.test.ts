@@ -1,7 +1,7 @@
 import { UVR_25V } from '@bench/engine';
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { CAPACITOR_VALUES } from '../../builder/catalog';
+import { CAPACITOR_VALUES } from '../../kinds/capacitor/model';
 import { buildCapacitor } from './buildCapacitor';
 import { CAP_INFO, CAP_PIECES } from './pieces';
 

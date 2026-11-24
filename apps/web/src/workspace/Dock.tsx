@@ -17,6 +17,7 @@ import {
   MeterWindow,
   PartsWindow,
   SerialWindow,
+  CodeWindow,
   SpecWindow,
   View3dWindow,
 } from './windows';
@@ -31,7 +32,22 @@ const COMPONENTS: Readonly<Record<WindowId, FunctionComponent<IDockviewPanelProp
   serial: SerialWindow,
   spec: SpecWindow,
   view3d: View3dPanel,
+  code: CodePanel,
 };
+
+/** The Code window in the dock: like the 3D view, its editor loads only once the tab's first brought to the front. */
+function CodePanel({ api }: IDockviewPanelProps) {
+  const [visible, setVisible] = useState(api.isVisible);
+  useEffect(() => {
+    const changed = api.onDidVisibilityChange((event) => {
+      setVisible(event.isVisible);
+    });
+    return () => {
+      changed.dispose();
+    };
+  }, [api]);
+  return <CodeWindow shown={visible} />;
+}
 
 /** The 3D view in the dock: a tab waiting behind the Board loads nothing until it's first brought to the front. */
 function View3dPanel({ api }: IDockviewPanelProps) {

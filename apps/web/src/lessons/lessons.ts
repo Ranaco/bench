@@ -1,8 +1,9 @@
 import { ESP32_GPIO, PN2222A, RED_LED } from '@bench/engine';
 import { netsOf, type Board, type PartKind, type PinRef, type PlacedPart } from '../builder/board';
-import { CATALOG, supplyFor } from '../builder/catalog';
+import { CATALOG } from '../builder/catalog';
+import { supplyFor } from '../kinds/battery/model';
 import type { MeterState } from '../builder/meter';
-import type { BoardSnapshot, ChipPin, PartReading } from '../builder/sync';
+import type { BoardSnapshot, ChipPin, PartReading } from '../sim';
 import { formatSI } from '../format';
 import { GLOW_AMPS } from '../kit';
 
@@ -577,7 +578,7 @@ export const MICROCONTROLLER: Lesson = {
       id: 'blink',
       title: 'Blink an LED from your program',
       detail:
-        'Wire GPIO2 to a 330 Ω resistor, the resistor to an LED’s anode, its cathode to GND. In program.ts: pinMode(2, OUTPUT) in setup(); in loop(), digitalWrite(2, HIGH), await delay(500), digitalWrite(2, LOW), await delay(500). Save, and it blinks: your first program, running.',
+        'Wire GPIO2 to a 330 Ω resistor, the resistor to an LED’s anode, its cathode to GND. In the ESP32’s program (select it, then Edit program): pinMode(2, OUTPUT) in setup(); in loop(), digitalWrite(2, HIGH), await delay(500), digitalWrite(2, LOW), await delay(500). Save, and it blinks: your first program, running.',
       passes: (state) => anyChipPin(state, (pin) => pin.mode === 'output') && liveLeds(state).some((led) => (led.flips ?? 0) >= 3),
     },
     {

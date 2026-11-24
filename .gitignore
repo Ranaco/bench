@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.tsbuildinfo
 .vite/
+# Where your own work lives (Settings in Bench): yours, not the repo's.
+bench.local.json

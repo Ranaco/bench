@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { removeWire, splitWire } from './board';
 import { ledLoop } from './fixtures';
 import { afterSplits, liveTarget, measure, METER_START, type MeterState } from './meter';
-import { BoardSim } from './sync';
+import { BoardSim } from '../sim';
 
 function running(ohms: number) {
   const loop = ledLoop(ohms);

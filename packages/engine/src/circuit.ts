@@ -1,4 +1,5 @@
 import { SingularMatrix, solveAllInPlace, solveInPlace } from './linear';
+import { FLICKER_FUSION_HZ, SeenAverage } from './seen';
 import {
   AMBIENT_CELSIUS,
   GROUND,
@@ -102,6 +103,19 @@ interface Controlled extends Guessed {
 const guessKey = (a: Node, b: Node) => `${String(a)}>${String(b)}`;
 
 /** A solved linear system, with the stamps that produced it. */
+/**
+ * What a multimeter would show: averages over the ticks since the last readout, as a meter averages between the
+ * numbers it shows. A part or node that's been there only part of that time is averaged over its own ticks.
+ */
+export interface Readout {
+  /** Each part's average current, A, for parts whose current() is written. */
+  readonly amps: ReadonlyMap<Part, number>;
+  /** Each of those parts' average power, W: volts × amps tick by tick, then averaged (not average volts × average amps). */
+  readonly watts: ReadonlyMap<Part, number>;
+  /** A node's average voltage, V; undefined for one with no ticks in that time. */
+  volts(node: Node): number | undefined;
+}
+
 interface Solved {
   readonly assembly: Assembly;
   readonly solution: Float64Array;
@@ -132,6 +146,15 @@ export class Circuit {
    * new temperature), so it describes the same moment as the voltages do.
    */
   private readonly measured = new Map<Part, number | undefined>();
+  /** Each part's current × time, and the time, over the ticks since averageCurrents() last ran. */
+  private readonly sums = new Map<Part, { charge: number; seconds: number }>();
+  /** Each part's current as an eye would see the light it makes (see seen.ts), from tick to tick. */
+  private readonly seen = new Map<Part, SeenAverage>();
+  /** Each part's charge, energy and time since the last readout (see takeReadout). */
+  private readonly meterParts = new Map<Part, { charge: number; energy: number; seconds: number }>();
+  /** Each node's volts × time, and its time, since the last readout, by node number. */
+  private meterVolts: number[] = [];
+  private meterSeconds: number[] = [];
   private last: Solved | undefined;
   private ticks = 0;
   private pending = 0;
@@ -155,6 +178,9 @@ export class Circuit {
   /** Gives a node back once no part uses it, so the next `node()` can reuse it. */
   release(node: Node): void {
     if (node === GROUND || this.spare.includes(node)) return;
+    // Whatever reuses it starts its readout afresh.
+    this.meterVolts[node] = 0;
+    this.meterSeconds[node] = 0;
     this.nodeNames[node] = 'spare';
     this.spare.push(node);
   }
@@ -177,6 +203,9 @@ export class Circuit {
     this.parts.splice(index, 1);
     this.missing.delete(part);
     this.measured.delete(part);
+    this.sums.delete(part);
+    this.seen.delete(part);
+    this.meterParts.delete(part);
     this.junctionVolts.delete(part);
     const internal = this.internals.get(part);
     if (internal) {
@@ -192,6 +221,9 @@ export class Circuit {
     this.parts[index] = next;
     this.missing.delete(old);
     this.measured.delete(old);
+    this.sums.delete(old);
+    this.seen.delete(old);
+    this.meterParts.delete(old);
     this.junctionVolts.delete(old);
     const internal = this.internals.get(old);
     if (internal) {
@@ -221,6 +253,7 @@ export class Circuit {
       const result = this.solve();
       iterations = Math.max(iterations, result.iterations);
       this.measure();
+      this.addToAverages();
       if (result.converged) this.settleParts();
       else {
         converged = false;
@@ -335,6 +368,89 @@ export class Circuit {
       if (this.lacks(part, 'stamp') || this.lacks(part, 'current')) continue;
       const amps = this.call(part, 'current', () => part.current(readings));
       if (!this.lacks(part, 'current')) this.measured.set(part, amps);
+    }
+  }
+
+  /**
+   * Each part's average current over the ticks since this was last called, A, and starts again; a part with no
+   * ticks since isn't in it. How much charge moved over that time: what a wire's flow dots move by. (How bright a
+   * light looks is seenCurrent(): an eye's time, not a screen frame's.)
+   */
+  averageCurrents(): Map<Part, number> {
+    const averages = new Map<Part, number>();
+    for (const [part, { charge, seconds }] of this.sums) averages.set(part, charge / seconds);
+    this.sums.clear();
+    return averages;
+  }
+
+  /**
+   * A part's current as an eye would see the light it makes, A: a light flickering faster than an eye can follow
+   * looks as bright as its average (see seen.ts). Undefined before its first tick.
+   */
+  seenCurrent(part: Part): number | undefined {
+    return this.seen.get(part)?.amps;
+  }
+
+  /** Every part's and node's averages since the last readout (see Readout), and starts again. */
+  takeReadout(): Readout {
+    const amps = new Map<Part, number>();
+    const watts = new Map<Part, number>();
+    for (const [part, { charge, energy, seconds }] of this.meterParts) {
+      amps.set(part, charge / seconds);
+      watts.set(part, energy / seconds);
+    }
+    const volts = this.meterVolts;
+    const seconds = this.meterSeconds;
+    this.meterParts.clear();
+    this.meterVolts = [];
+    this.meterSeconds = [];
+    return {
+      amps,
+      watts,
+      volts: (node) => {
+        if (node === GROUND) return 0;
+        const time = seconds[node] ?? 0;
+        return time > 0 ? (volts[node] ?? 0) / time : undefined;
+      },
+    };
+  }
+
+  /** Adds the tick just solved to each part's running averages. */
+  private addToAverages(): void {
+    this.addToReadout();
+    for (const [part, amps] of this.measured) {
+      if (amps === undefined) continue;
+      const seen = this.seen.get(part);
+      if (seen) seen.add(amps);
+      else this.seen.set(part, new SeenAverage(amps, Math.round(1 / (FLICKER_FUSION_HZ * TICK))));
+      const sum = this.sums.get(part);
+      if (sum) {
+        sum.charge += amps * TICK;
+        sum.seconds += TICK;
+      } else this.sums.set(part, { charge: amps * TICK, seconds: TICK });
+    }
+  }
+
+  /** Adds the tick just solved to the readout: each part's current and power, each node's voltage. */
+  private addToReadout(): void {
+    const last = this.last;
+    if (!last) return;
+    for (const [part, amps] of this.measured) {
+      if (amps === undefined) continue;
+      const entry = this.meterParts.get(part);
+      if (entry) {
+        entry.charge += amps * TICK;
+        entry.seconds += TICK;
+      } else this.meterParts.set(part, { charge: amps * TICK, energy: 0, seconds: TICK });
+    }
+    // One pass over every current for every part's power: powerOf() for each would go over them all for each.
+    for (const flow of this.flows(last)) {
+      const entry = flow.owner && this.meterParts.get(flow.owner);
+      if (entry) entry.energy += flow.watts * TICK;
+    }
+    for (let node = 1; node <= last.nodeCount; node++) {
+      this.meterVolts[node] = (this.meterVolts[node] ?? 0) + voltageIn(last.solution, node as Node) * TICK;
+      this.meterSeconds[node] = (this.meterSeconds[node] ?? 0) + TICK;
     }
   }
 

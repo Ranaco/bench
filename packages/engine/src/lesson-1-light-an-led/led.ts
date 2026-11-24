@@ -1,5 +1,6 @@
-import { AMBIENT_CELSIUS, THERMAL_VOLTAGE, type Node, type Curve, type Part, type Readings, type Stamp } from '../types';
-import { ThermalMass } from '../thermal';
+import { AMBIENT_CELSIUS, NotWrittenYet, type Node, type Part, type Readings, type Stamp } from '../types';
+
+const FILE = 'packages/engine/src/lesson-1-light-an-led/led.ts';
 
 /** What an LED's datasheet says, plus two numbers fitted to its graphs. */
 export interface LedSpec {
@@ -86,46 +87,23 @@ export class Led implements Part {
   burnt = false;
   /** Junction temperature, °C. */
   temperature = AMBIENT_CELSIUS;
-  private readonly curve: Curve;
-  private junction: Node | undefined;
-  private readonly heat: ThermalMass
 
   constructor(
     readonly name: string,
     readonly anode: Node,
     readonly cathode: Node,
     readonly spec: LedSpec = RED_LED,
-  ) {
-    const steepness = spec.ideality * THERMAL_VOLTAGE;
-    const insideVolts = spec.forwardVolts - spec.typicalAmps * spec.seriesOhms;
-
-    const leak = spec.typicalAmps / Math.expm1(insideVolts / steepness);
-
-    this.curve = {
-      current: (volts) => leak * Math.expm1(volts / steepness),
-      slope: (volts) => (leak / steepness) * Math.exp(volts / steepness)
-    }
-
-    this.heat = new ThermalMass(spec.kelvinPerWatt, spec.joulesPerKelvin)
-  }
+  ) {}
 
   stamp(s: Stamp): void {
-    if(this.burnt) return;
-    this.junction = s.internal('junction')
-    s.junction(this.anode, this.junction, this.curve)
-    s.conductance(this.junction, this.cathode, 1 / this.spec.seriesOhms)
+    throw new NotWrittenYet(this.name, FILE);
   }
 
   current(r: Readings): number {
-    if(this.burnt || this.junction === undefined) return 0;
-
-    return r.across(this.junction, this.cathode) / this.spec.seriesOhms;
+    throw new NotWrittenYet(this.name, FILE);
   }
 
   settle(r: Readings, dt: number): void {
-    const watts = this.current(r) * r.across(this.anode, this.cathode); // p = IV
-    this.temperature = this.heat.update(watts, dt, r.ambient);
-
-    if(this.temperature > this.spec.maxJunctionCelsius) this.burnt = true;
+    throw new NotWrittenYet(this.name, FILE);
   }
 }

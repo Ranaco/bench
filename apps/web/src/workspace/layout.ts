@@ -6,7 +6,7 @@ import type { DockviewApi, DockviewGroupPanel, Direction, SerializedDockview } f
  */
 
 export type Mode = 'lessons' | 'build';
-export type WindowId = 'lesson' | 'board' | 'parts' | 'meter' | 'inspector' | 'graph' | 'serial' | 'spec' | 'view3d';
+export type WindowId = 'lesson' | 'board' | 'parts' | 'meter' | 'inspector' | 'graph' | 'serial' | 'spec' | 'view3d' | 'code';
 
 export const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
   lesson: 'Lesson',
@@ -18,21 +18,23 @@ export const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
   serial: 'Serial Monitor',
   spec: 'Spec sheet',
   view3d: '3D view',
+  code: 'Code',
 };
 
 /** The windows each mode has, in menu order. */
 export const WINDOWS: Readonly<Record<Mode, readonly WindowId[]>> = {
-  lessons: ['lesson', 'board', 'view3d', 'parts', 'meter', 'inspector', 'graph', 'serial', 'spec'],
-  build: ['board', 'view3d', 'parts', 'meter', 'inspector', 'graph', 'serial', 'spec'],
+  lessons: ['lesson', 'board', 'view3d', 'code', 'parts', 'meter', 'inspector', 'graph', 'serial', 'spec'],
+  build: ['board', 'view3d', 'code', 'parts', 'meter', 'inspector', 'graph', 'serial', 'spec'],
 };
 
 /**
  * Bumped whenever the windows change, so an old saved arrangement is dropped for
  * the new default rather than misread (2 added the Meter; 3 tabbed the Graph with the Inspector; 4 gave the
  * Meter room for its guess box; 5 gave Parts a second row, for the switch and the button; 6 added the Spec sheet,
- * tabbed with the Meter; 7 added 3D, tabbed with the Board; 8 added the Serial Monitor, tabbed with the Inspector).
+ * tabbed with the Meter; 7 added 3D, tabbed with the Board; 8 added the Serial Monitor, tabbed with the Inspector;
+ * 9 added the Code window, below the Board when it's opened).
  */
-const LAYOUT_VERSION = 8;
+const LAYOUT_VERSION = 9;
 const storageKey = (mode: Mode) => `bench.layout.${mode}`;
 
 /** Where a window goes when it's opened, by the first neighbour that's open: [neighbour, side]. */
@@ -78,6 +80,12 @@ const HOMES: Readonly<Record<WindowId, readonly (readonly [WindowId, Direction])
     ['lesson', 'right'],
     ['parts', 'left'],
   ],
+  // Below the Board: you edit a part's code and watch it run, both at once.
+  code: [
+    ['board', 'below'],
+    ['view3d', 'below'],
+    ['lesson', 'right'],
+  ],
   // Beside the Meter, the taller window: a spec sheet is a long read.
   spec: [
     ['meter', 'within'],
@@ -95,7 +103,9 @@ export function openWindow(api: DockviewApi, id: WindowId, size: { initialWidth?
     return;
   }
   const home = HOMES[id].find(([neighbour]) => api.getPanel(neighbour));
-  const options = { id, component: id, title: WINDOW_TITLES[id], ...size };
+  // The Code window opens tall enough to read a part's code, under a board still big enough to watch.
+  const sized = id === 'code' && size.initialHeight === undefined ? { ...size, initialHeight: 380 } : size;
+  const options = { id, component: id, title: WINDOW_TITLES[id], ...sized };
   api.addPanel(home ? { ...options, position: { referencePanel: home[0], direction: home[1] } } : options);
 }
 

@@ -85,9 +85,31 @@ export function analogRead(pin: number): number {
   return board('analogRead()').host.analogRead(pin);
 }
 
+/** 2³²: a real delay() takes its milliseconds as an unsigned 32-bit number, so a negative one wraps round by this. */
+const UINT32 = 2 ** 32;
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * A wait a real ESP32 couldn't do as asked. Its delay() is `void delay(uint32_t ms)` (arduino-esp32,
+ * cores/esp32/esp32-hal-misc.c): a negative number wraps round to a huge one, and NaN or infinity has no whole number
+ * of milliseconds at all. A fraction above -1 is cut to 0, as the conversion does, so float dust is fine.
+ */
+function impossibleWait(ms: number): string | undefined {
+  if (!Number.isFinite(ms)) {
+    return `delay(${String(ms)}): that isn't a number of milliseconds, so there's no telling how long a real ESP32 would wait. Check the sum you worked the wait out from.`;
+  }
+  if (ms > -1) return undefined;
+  const wrapped = ((Math.trunc(ms) % UINT32) + UINT32) % UINT32;
+  const days = (wrapped / MS_PER_DAY).toFixed(1);
+  return `delay(${String(ms)}) asks to wait a negative time. A real ESP32's delay() only takes whole numbers from 0 up, so ${String(ms)} would become ${String(wrapped)} ms, about ${days} days: your program would stop here. Check the sum you worked the wait out from.`;
+}
+
 /** Waits `ms` milliseconds of the board's time, while the rest of the circuit carries on. Always `await` it. */
 export function delay(ms: number): Promise<void> {
   const s = board('delay()');
+  // Thrown here, not from the promise: a delay() called without `await` would lose a rejection.
+  const impossible = impossibleWait(ms);
+  if (impossible !== undefined) throw new ProgramMistake(impossible);
   return new Promise<void>((resolve) => {
     const waiting: Waiting = {
       until: s.host.millis() + Math.max(0, ms),

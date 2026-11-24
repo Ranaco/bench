@@ -1,13 +1,13 @@
 /**
  * The ESP32 on the board: its program ending cleanly when the board changes under it, and a pin nothing holds
- * (floating) counting towards nothing.
+ * (floating) counting towards nothing, and an LED switched faster than a frame glowing at its average.
  */
-import { adcReading, Gpio, NotWrittenYet, ProgramMistake, type ProgramTransport, type Stamp, type Writes } from '@bench/engine';
+import { adcReading, arduino, DEFAULTS, Gpio, NotWrittenYet, ProgramMistake, ProgramRunner, type ProgramTransport, type Stamp, type Writes } from '@bench/engine';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { addWire, EMPTY_BOARD, removePart } from './board';
-import { ESP32_ADC } from './esp32Board';
+import { ESP32_ADC } from '../kinds/esp32/board';
 import { gpioWritten, partOf, place, run } from './fixtures';
-import { BoardSim } from './sync';
+import { BoardSim } from '../sim';
 
 /** A program that's always partway through: each step waits on it until it's stopped, as a worker's does. */
 class Partway implements ProgramTransport {
@@ -32,14 +32,20 @@ class Partway implements ProgramTransport {
   }
 }
 
-/** A BoardSim whose every ESP32 runs a Partway program, and the programs it's made. */
+/**
+ * A BoardSim whose every ESP32 runs a Partway program, and the programs it's made. Its parts are built from Bench's
+ * defaults, so the stand-ins below (on Gpio, the default pin) are what its ESP32 runs.
+ */
 function partwaySim() {
   const programs: Partway[] = [];
-  const sim = new BoardSim(() => {
-    const program = new Partway();
-    programs.push(program);
-    return program;
-  });
+  const sim = new BoardSim(
+    () => {
+      const program = new Partway();
+      programs.push(program);
+      return program;
+    },
+    () => DEFAULTS,
+  );
   return { sim, programs };
 }
 
@@ -162,3 +168,67 @@ describe.runIf(gpioWritten)('A pin nothing holds', () => {
 if (!gpioWritten) {
   it.todo('Floating ESP32 pins: needs your GPIO pin, in packages/engine/src/lesson-6-microcontroller/gpio.ts');
 }
+
+/** GPIO2 → 330 Ω → LED → GND, with GPIO2 switched every 2 ms, running on this thread. */
+function fastBlink() {
+  const chip = place(EMPTY_BOARD, 'esp32');
+  const r = place(chip.board, 'resistor', 0, 0, { ohms: 330 });
+  const led = place(r.board, 'led');
+  let board = addWire(led.board, { part: chip.id, pin: 'gpio2' }, { part: r.id, pin: 'a' });
+  board = addWire(board, { part: r.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+  board = addWire(board, { part: led.id, pin: 'cathode' }, { part: chip.id, pin: 'gnd' });
+  const sim = new BoardSim(
+    () =>
+      new ProgramRunner({
+        setup() {
+          arduino.pinMode(2, arduino.OUTPUT);
+        },
+        async loop() {
+          arduino.digitalWrite(2, arduino.HIGH);
+          await arduino.delay(2);
+          arduino.digitalWrite(2, arduino.LOW);
+          await arduino.delay(2);
+        },
+      }),
+  );
+  sim.sync(board);
+  return { sim, chip: chip.id, led: led.id };
+}
+
+describe.runIf(gpioWritten)('An LED switched faster than the screen draws', () => {
+  it('glows steady at its average, half as much at 2 ms on and 2 ms off, not on and off at random', async () => {
+    const { sim, led } = fastBlink();
+    for (let frame = 0; frame < 30; frame++) await sim.advance(1 / 60);
+    const glows: number[] = [];
+    const instants: number[] = [];
+    for (let frame = 0; frame < 30; frame++) {
+      await sim.advance(1 / 60);
+      const reading = partOf(sim, led);
+      glows.push(reading.glowAmps ?? 0);
+      instants.push(reading.amps ?? 0);
+    }
+    const on = Math.max(...instants); // what it carries while GPIO2 is HIGH
+    expect(Math.min(...instants)).toBeLessThan(1e-6); // the moment itself still flips between on and off…
+    // …but a 16.7 ms frame is about half on: a little more or less, by where the 2 ms halves fall in it.
+    for (const glow of glows) {
+      expect(glow).toBeGreaterThan(0.4 * on);
+      expect(glow).toBeLessThan(0.6 * on);
+    }
+  });
+
+  it('reads in the Inspector as a multimeter does: switching, half the time HIGH, 4 times a second', async () => {
+    const { sim, chip } = fastBlink();
+    for (let frame = 0; frame < 30; frame++) await sim.advance(1 / 60);
+    const shown = new Set<unknown>();
+    for (let frame = 0; frame < 30; frame++) {
+      await sim.advance(1 / 60);
+      const readout = partOf(sim, chip).chip?.readout;
+      shown.add(readout);
+      const pin = readout?.pins.gpio2;
+      expect(pin?.switches).toBeGreaterThanOrEqual(2);
+      expect(pin?.highShare).toBeGreaterThan(0.4);
+      expect(pin?.highShare).toBeLessThan(0.6);
+    }
+    expect(shown.size).toBeLessThanOrEqual(3); // half a second: two or three readouts, not thirty
+  });
+});

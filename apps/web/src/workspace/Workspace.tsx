@@ -1,7 +1,7 @@
 import type { DockviewApi } from 'dockview-react';
 import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import { PALETTE } from '../builder/catalog';
-import { SessionContext, useSession, useSessionState } from '../builder/session';
+import { SessionContext, useSession, useSessionState, type SessionSource } from '../builder/session';
 import type { Lesson } from '../lessons/lessons';
 import { LessonContext, useLessonProgress } from '../lessons/progress';
 import { Dock } from './Dock';
@@ -10,6 +10,7 @@ import { ShowWindowContext } from './show';
 import { WindowsMenu } from './WindowsMenu';
 import {
   BoardWindow,
+  CodeWindow,
   GraphWindow,
   InspectorWindow,
   LessonWindow,
@@ -40,9 +41,18 @@ function useMediaQuery(query: string): boolean {
  * A lesson's workspace, or Build's: a board session (and the lesson being
  * played) shared by every window, the header's board actions, and the dock.
  */
-export function Workspace({ lesson, nav }: { readonly lesson: Lesson | undefined; readonly nav: ReactNode }) {
+export function Workspace({
+  lesson,
+  source,
+  nav,
+}: {
+  readonly lesson: Lesson | undefined;
+  /** Where the board comes from and is saved, and how its parts and programs run. */
+  readonly source: SessionSource;
+  readonly nav: ReactNode;
+}) {
   const mode: Mode = lesson ? 'lessons' : 'build';
-  const session = useSessionState(lesson ? `bench.lesson.${lesson.id}.board` : 'bench.board', lesson?.parts ?? PALETTE);
+  const session = useSessionState(source, lesson?.parts ?? PALETTE);
   const progress = useLessonProgress(lesson, session.sim, session.board, session.meter);
   const narrow = useMediaQuery(NARROW);
   const [api, setApi] = useState<DockviewApi | undefined>(undefined);
@@ -145,6 +155,7 @@ function Stacked({ mode }: { readonly mode: Mode }) {
           ...(programmed ? ([['serial', 'Serial Monitor', SerialWindow]] as const) : []),
           ['spec', 'Spec sheet', SpecWindow],
           ['graph', 'Graph', GraphWindow],
+          ['code', 'Code', CodeWindow],
         ] as const
       ).map(([id, title, Window]) => (
         <section key={id} id={`stack-${id}`} className="stack-card" aria-label={title}>

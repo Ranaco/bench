@@ -61,6 +61,43 @@ describe('ProgramRunner', () => {
     expect(await runTo(runner, 1600)).toBe('1\n501\n1001\n1501\n'); // no setup(): loop() from 1 ms
   });
 
+  it('doesn’t wait in delay(0): a pin set HIGH and straight back LOW is never HIGH for a whole millisecond', async () => {
+    const runner = new ProgramRunner({
+      setup() {
+        pinMode(2, OUTPUT);
+      },
+      async loop() {
+        digitalWrite(2, HIGH);
+        await delay(0);
+        digitalWrite(2, LOW);
+        await delay(10);
+      },
+    });
+    await runner.resume(at(1)); // setup()
+    const writes = await runner.resume(at(2));
+    expect(writes.levels).toEqual([
+      [2, true],
+      [2, false],
+    ]); // both in the same millisecond, so the circuit only ever sees LOW
+    expect(runner.due(3)).toBe(false);
+    expect(runner.due(12)).toBe(true);
+  });
+
+  it('waits for the next millisecond on a second delay(0) in the same one, rather than never letting time pass', async () => {
+    let reads = 0;
+    const runner = new ProgramRunner({
+      async loop() {
+        for (;;) {
+          reads++;
+          await delay(0);
+        }
+      },
+    });
+    await runTo(runner, 5);
+    expect(reads).toBeGreaterThanOrEqual(5); // at least once a millisecond…
+    expect(reads).toBeLessThanOrEqual(10); // …and never stuck in one
+  });
+
   it('records pinMode() and digitalWrite() in the order they were called', async () => {
     const runner = new ProgramRunner({
       setup() {
@@ -136,6 +173,31 @@ describe('ProgramRunner', () => {
     });
     await expect(crashing.resume(at(1))).rejects.toThrow('boom');
     expect(crashing.failed?.message).toBe('boom');
+  });
+
+  it('stops on a wait a real ESP32 couldn’t do as asked: negative, or not a number', async () => {
+    const waitFor = (ms: number) =>
+      new ProgramRunner({
+        async loop() {
+          await delay(ms);
+        },
+      });
+    // Its delay() takes an unsigned 32-bit number: -1 wraps round to 2³² - 1 ms.
+    await expect(waitFor(-1).resume(at(1))).rejects.toThrow(/would become 4294967295 ms, about 49\.7 days/);
+    await expect(waitFor(-3).resume(at(1))).rejects.toThrow(/4294967293 ms/);
+    await expect(waitFor(Number.NaN).resume(at(1))).rejects.toThrow(/isn't a number of milliseconds/);
+    await expect(waitFor(Infinity).resume(at(1))).rejects.toThrow(/isn't a number of milliseconds/);
+    // Not awaited, it still stops the program rather than vanishing with its promise.
+    const unawaited = new ProgramRunner({
+      loop() {
+        void delay(-5);
+      },
+    });
+    await expect(unawaited.resume(at(1))).rejects.toThrow(ProgramMistake);
+    // Above -1 the conversion cuts it to 0, as it does on the chip: float dust doesn't stop a program.
+    const dust = waitFor(-1e-9);
+    await dust.resume(at(1));
+    expect(dust.failed).toBeUndefined();
   });
 
   it('refuses an output or a pull on an input-only pin, as the chip has neither', async () => {

@@ -1,4 +1,4 @@
-import { Circuit, GROUND, Supply, Transistor } from '@bench/engine';
+import { Circuit, GROUND, Supply, Transistor, type ModuleClasses } from '@bench/engine';
 
 /** One point of the transistor's graphs: the voltage on its base, the current into it, and what that lets through. */
 export interface TransistorPoint {
@@ -20,14 +20,14 @@ const STEPS = 140;
  * stepped up, both currents read. The supplies' currents are the transistor's, so this works before current() is
  * written. Undefined while its stamp() isn't written yet, or if it throws.
  */
-export function measureTransistor(): TransistorPoint[] | undefined {
+export function measureTransistor(transistor: ModuleClasses['transistor'] = Transistor): TransistorPoint[] | undefined {
   try {
     const c = new Circuit();
     const collector = c.node('collector');
     const base = c.node('base');
     const vce = c.add(new Supply('VCE', collector, GROUND, GAIN_TEST_VOLTS));
     const vbe = c.add(new Supply('VBE', base, GROUND, FROM));
-    const q = c.add(new Transistor('Q1', collector, base, GROUND));
+    const q = c.add(new transistor('Q1', collector, base, GROUND));
     const points: TransistorPoint[] = [];
     for (let i = 0; i <= STEPS; i++) {
       vbe.volts = FROM + ((TO - FROM) * i) / STEPS;

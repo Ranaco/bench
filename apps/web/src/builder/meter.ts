@@ -1,11 +1,13 @@
 import type { Board, PinRef, Split } from './board';
 import { CATALOG } from './catalog';
-import type { BoardSnapshot } from './sync';
+import type { BoardSnapshot } from '../sim';
 
 /**
  * The multimeter. In Volts it's a voltmeter: red and black leads on any two
  * points, reading red minus black. In Amps it's a clamp meter: the jaws close
  * round a wire and read the current along it without breaking the circuit.
+ * While a program switches pins, it reads what the Inspector does: averages,
+ * four times a second, as a real meter's display does (see sim/readout.ts).
  */
 
 export type MeterMode = 'volts' | 'amps';
@@ -56,6 +58,9 @@ export function afterSplits(target: ProbeTarget, splits: readonly Split[]): Prob
 
 const pinKey = (pin: PinRef) => `${pin.part}.${pin.pin}`;
 
+/** A pin's volts as the meter shows them: averaged while a program switches pins, as they are otherwise. */
+const pinVolts = (snapshot: BoardSnapshot, pin: PinRef) => snapshot.readout?.pins[pinKey(pin)] ?? snapshot.pins[pinKey(pin)];
+
 /**
  * Volts at a target, from ground (or from wherever the circuit floats, without
  * one: only differences mean anything then, and a voltmeter only reads differences).
@@ -63,10 +68,10 @@ const pinKey = (pin: PinRef) => `${pin.part}.${pin.pin}`;
  * its voltage evenly along its length.
  */
 export function voltsAt(board: Board, snapshot: BoardSnapshot, target: ProbeTarget): number | undefined {
-  if (target.kind === 'pin') return snapshot.pins[pinKey(target.pin)];
+  if (target.kind === 'pin') return pinVolts(snapshot, target.pin);
   const wire = board.wires.find((w) => w.id === target.wire);
-  const a = wire && snapshot.pins[pinKey(wire.a)];
-  const b = wire && snapshot.pins[pinKey(wire.b)];
+  const a = wire && pinVolts(snapshot, wire.a);
+  const b = wire && pinVolts(snapshot, wire.b);
   return a === undefined || b === undefined ? undefined : a + (b - a) * target.t;
 }
 
@@ -105,7 +110,7 @@ export function measure(meter: MeterState, board: Board, snapshot: BoardSnapshot
   }
   const clamp = liveTarget(board, meter.leads.clamp);
   if (clamp?.kind !== 'wire') return 'Drag the clamp from the bottom-left of the board onto a wire.';
-  const amps = snapshot.wires[clamp.wire]?.amps;
+  const amps = snapshot.readout?.wires[clamp.wire] ?? snapshot.wires[clamp.wire]?.amps;
   if (amps === undefined) return 'Reading…';
   return { key: `A:${clamp.wire}`, value: Math.abs(amps), unit: 'A', what: `Current along ${describeTarget(board, clamp)}.` };
 }

@@ -1,4 +1,4 @@
-import { type Node, type Part, type Readings, type Stamp } from '../types';
+import { NotWrittenYet, type Node, type Part, type Readings, type Stamp } from '../types';
 
 /** What a potentiometer's datasheet says. */
 export interface PotSpec {
@@ -31,6 +31,8 @@ export const KNOB_10K: PotSpec = {
   ratedWatts: 0.05,
   ratedVolts: 20,
 };
+
+const FILE = 'packages/engine/src/lesson-3-knob/potentiometer.ts';
 
 /**
  * Potentiometer: your third part, the knob. A resistor with a third pin, the
@@ -92,13 +94,10 @@ export class Potentiometer implements Part {
   }
 
   stamp(s: Stamp): void {
-    const [toA, toB] = this.legs();
-    s.conductance(this.a, this.wiper, 1 / toA);
-    s.conductance(this.wiper, this.b, 1 / toB);
+    throw new NotWrittenYet(this.name, FILE);
   }
 
   current(r: Readings): number {
-    const [toA] = this.legs();
-    return r.across(this.a, this.wiper) / toA;
+    throw new NotWrittenYet(this.name, FILE);
   }
 }

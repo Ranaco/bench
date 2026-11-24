@@ -600,3 +600,61 @@ describe('Circuit, parts that remember', () => {
     expect(c.currentThrough(counter)).toBe(1); // a fresh solve reads it again
   });
 });
+
+describe('Circuit, averages over time', () => {
+  it('gives each part’s average current since it was last asked, then starts again', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    const source = c.add(new FixedCurrent('I1', GROUND, a, 0.03));
+    c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(3 * TICK); // 30 mA for three ticks…
+    source.amps = 0;
+    c.step(TICK); // …then nothing for one
+    expect(c.averageCurrents().get(source)).toBeCloseTo(0.0225, 12);
+    expect(c.averageCurrents().size).toBe(0); // no ticks since
+    c.step(0); // a solve that doesn't move time on adds nothing
+    expect(c.averageCurrents().size).toBe(0);
+  });
+
+  it('reads like a multimeter: each part’s current and power and each node’s voltage, averaged tick by tick', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    const source = c.add(new FixedCurrent('I1', GROUND, a, 0.03));
+    const load = c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(3 * TICK); // 30 mA through 100 Ω, 3 V, for three ticks…
+    source.amps = 0;
+    c.step(TICK); // …then nothing for one
+    const readout = c.takeReadout();
+    expect(readout.amps.get(load)).toBeCloseTo(0.0225, 9);
+    expect(readout.volts(a)).toBeCloseTo(2.25, 9);
+    expect(readout.volts(GROUND)).toBe(0);
+    // 0.09 W for three ticks of four: the power's average, not average volts × average amps (0.0506 W).
+    expect(readout.watts.get(load)).toBeCloseTo(0.0675, 9);
+    // And it starts again.
+    const next = c.takeReadout();
+    expect(next.amps.size).toBe(0);
+    expect(next.volts(a)).toBeUndefined();
+  });
+
+  it('reads a part added since the last readout over its own ticks', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    c.add(new FixedCurrent('I1', GROUND, a, 0.01));
+    c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(2 * TICK);
+    const late = c.add(new Resistor('R2', a, GROUND, 100));
+    c.step(2 * TICK);
+    expect(c.takeReadout().amps.get(late)).toBeCloseTo(0.005, 12);
+  });
+
+  it('averages a part added part-way over its own ticks only', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    c.add(new FixedCurrent('I1', GROUND, a, 0.01));
+    c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(2 * TICK);
+    const late = c.add(new Resistor('R2', a, GROUND, 100));
+    c.step(2 * TICK);
+    expect(c.averageCurrents().get(late)).toBeCloseTo(0.005, 12); // half of 10 mA, for both of its ticks
+  });
+});

@@ -1,13 +1,4 @@
-import {
-  awgArea,
-  conductorOhms,
-  COPPER,
-  ENERGIZER_522,
-  ENERGIZER_E91,
-  Led,
-  sweep,
-  type IvPoint,
-} from '@bench/engine';
+import { awgArea, conductorOhms, COPPER, ENERGIZER_522, ENERGIZER_E91, Led, sweep, type IvPoint, type ModuleClasses } from '@bench/engine';
 
 /** The parts box: what every lesson and Build mode pick from. */
 
@@ -57,10 +48,10 @@ export const DATASHEET_POINTS: readonly IvPoint[] = [
 /** The faintest current the LED datasheet's graph plots: below it, there's nothing on record to see. */
 export const GLOW_AMPS = Math.min(...DATASHEET_POINTS.map((p) => p.amps));
 
-/** Measures the LED model across 0–3 V, or undefined while it isn't written. */
-export function measureLed(): IvPoint[] | undefined {
+/** Measures an LED's code across 0–3 V (Bench's default unless given another), or undefined while it isn't written. */
+export function measureLed(led: ModuleClasses['led'] = Led): IvPoint[] | undefined {
   try {
-    return sweep((a, b) => new Led('D1', a, b), 0, 3, 150);
+    return sweep((a, b) => new led('D1', a, b), 0, 3, 150);
   } catch {
     return undefined; // A model with a bug shows its error elsewhere; the graph just leaves it out.
   }

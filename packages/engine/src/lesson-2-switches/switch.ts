@@ -1,4 +1,4 @@
-import { type Node, type Part, type Readings, type Stamp } from '../types';
+import { NotWrittenYet, type Node, type Part, type Readings, type Stamp } from '../types';
 
 /** What a switch's datasheet says about its contacts. */
 export interface SwitchSpec {
@@ -27,6 +27,7 @@ export const SLIDE_SWITCH: SwitchSpec = { closedOhms: 0.05, openOhms: 100e6, rat
  */
 export const TACT_SWITCH: SwitchSpec = { closedOhms: 0.1, openOhms: 100e6, ratedAmps: 0.05, ratedVolts: 12 };
 
+const FILE = 'packages/engine/src/lesson-2-switches/switch.ts';
 
 /**
  * Switch: your second part, and a short one. Two metal contacts that either
@@ -72,12 +73,10 @@ export class Switch implements Part {
   ) {}
 
   stamp(s: Stamp): void {
-    const ohms = this.closed ? this.spec.closedOhms : this.spec.openOhms;
-    s.conductance(this.a, this.b, 1 / ohms)
+    throw new NotWrittenYet(this.name, FILE);
   }
 
   current(r: Readings): number {
-    const ohms = this.closed ? this.spec.closedOhms : this.spec.openOhms;
-    return r.across(this.a, this.b) / ohms
+    throw new NotWrittenYet(this.name, FILE);
   }
 }

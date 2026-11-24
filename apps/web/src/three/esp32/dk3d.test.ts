@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { ESP32_PINS } from '../../builder/esp32Board';
+import { ESP32_PINS } from '../../kinds/esp32/board';
 import { buildDevKitC } from './buildDevKitC';
 import { BACK_ROW, BOARD, BOARD_PINS, FRONT_ROW, MODULE } from './devkitc';
 import { DK_INFO, DK_PIECES } from './pieces';

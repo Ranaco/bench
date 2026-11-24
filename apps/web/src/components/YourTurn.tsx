@@ -6,6 +6,10 @@ interface YourTurnProps {
   readonly file: string;
   /** The methods still to write. */
   readonly methods: readonly Method[];
+  /** Opens the part's code in the Code window. */
+  readonly onOpen: () => void;
+  /** Your home folder, when the code's kept there as a file (on the computer, not the phone). */
+  readonly home: string | undefined;
 }
 
 const STILL_NEEDED: Readonly<Record<Method, string>> = {
@@ -42,13 +46,17 @@ function modelOf(file: string): readonly [string, string] {
 }
 
 /** What's left to write in a part, and where. Shown inside a FloatingCard. */
-export function YourTurn({ part, file, methods }: YourTurnProps) {
+export function YourTurn({ part, file, methods, onOpen, home }: YourTurnProps) {
   const [copied, setCopied] = useState(false);
   const started = !methods.includes('stamp');
   const [aModel, model] = modelOf(file);
+  // Your copy, in your home folder: the same file the Code window edits.
+  const base = file.split('/').at(-1) ?? file;
+  const mine = home === undefined ? undefined : `${home.replaceAll('\\', '/')}/lessons/${base}`;
 
   const copy = () => {
-    void navigator.clipboard.writeText(file).then(() => {
+    if (mine === undefined) return;
+    void navigator.clipboard.writeText(mine).then(() => {
       setCopied(true);
       window.setTimeout(() => {
         setCopied(false);
@@ -56,9 +64,14 @@ export function YourTurn({ part, file, methods }: YourTurnProps) {
     });
   };
 
-  const path = (
+  const open = (
+    <button type="button" className="ghost" onClick={onOpen}>
+      Open it in the Code window
+    </button>
+  );
+  const path = mine !== undefined && (
     <>
-      <code>{file}</code>
+      <code>{mine}</code>
       <button type="button" className="copy" onClick={copy}>
         {copied ? 'Copied' : 'Copy path'}
       </button>
@@ -75,7 +88,8 @@ export function YourTurn({ part, file, methods }: YourTurnProps) {
           ))}
         </ul>
         {WAITING[model] && <p>{WAITING[model]}</p>}
-        <p className="path">In {path}</p>
+        <p className="path">{open}</p>
+        {path && <p className="path">Or in your own editor: {path}</p>}
       </>
     );
   }
@@ -86,11 +100,11 @@ export function YourTurn({ part, file, methods }: YourTurnProps) {
         {`${part} is still a stub, so it isn’t in the circuit yet and nothing flows through it. Teach the engine how ${aModel} behaves and it comes alive here.`}
       </p>
       <ol>
-        <li>Open {path}</li>
+        <li>{open}{path && <> or, in your own editor, {path}</>}</li>
         <li>
-          Run <code>pnpm test:watch</code> and make the {model} tests pass
+          Write it, job by job. <code>pnpm test:watch</code> checks each against the datasheet
         </li>
-        <li>Save, and this page reloads with your {model} in the circuit</li>
+        <li>Save, and your {model} is in the circuit at once</li>
       </ol>
     </>
   );

@@ -15,28 +15,34 @@ pnpm test:watch   # engine tests, re-run on save
 pnpm check        # types, lint and every test
 ```
 
+The first time, open **Settings** and choose your home folder: where your own work is kept, outside this repo
+(see [Your home folder](#your-home-folder)).
+
 ## The menu
 
 ![The main menu](docs/screens/home.png)
 
 Bench opens on a main menu: **Continue** (or Start) picks up the lesson you're on, **Lessons** lists them all
-with your progress (and the ones still to come, locked), and **Build** opens a free board. Arrow keys and Enter
+with your progress (and the ones still to come, locked), **Build** lists your projects, and **Settings** says
+where your work is kept. Arrow keys and Enter
 work as in a game; Esc on the lesson list goes back. In the workspace, the trail at the top left
 (Bench / Lessons / Light an LED) goes back up.
 
 - **Lessons**: a goal and a list of steps, checked against the live circuit as you build. A step passes because
   the physics says so (the LED really carries 10–30 mA), not because parts sit in the right places. Progress
   and the board are saved per lesson; *Start this lesson over* clears both.
-- **Build**: a free board with every part so far, and no goals.
+- **Build**: your projects, like a game's save slots. Each is a board with every part so far and no goals, kept as
+  a folder of its own (see [Your home folder](#your-home-folder)): start a new one, or rename, duplicate or delete
+  one. Click a project's name in the header to rename it.
 
-Each lesson and Build has its own board and undo history; Lessons and Build each keep their own arrangement of
-windows. Where you are lives in the address (`#/build`, `#/lessons/light-an-led`), so a reload, including the
-one after saving a part model, comes back to the same place.
+Each lesson and each project has its own board and undo history; Lessons and Build each keep their own arrangement
+of windows. Where you are lives in the address (`#/build/night-light`, `#/lessons/light-an-led`), so a reload comes
+back to the same place.
 
 ## The workspace
 
 Everything is a window: **Board**, **Parts**, **Meter**, **Inspector**, **Graph** and **Serial Monitor** (tabs
-beside the Inspector), and in Lessons, **Lesson**.
+beside the Inspector), **Code** (below the Board, when you open it), and in Lessons, **Lesson**.
 
 - Drag a tab to move a window: into another window's tab bar, or to any edge to split. Drag the gaps between
   windows to resize them.
@@ -119,7 +125,9 @@ Pop-out windows (a window in its own browser window, for a second screen) are no
   where it is now, with a trail of where it's been: turn the knob and it rides the line, then goes flat when it's
   fully on.
 - **The ESP32** (an ESP32-DevKitC, a handful of its pins: 3V3, GND, GPIO 2, 4, 5, 18, 19, 21, 32, 33 and 34) runs
-  your program, `program.ts`, as soon as your pin model is written. What it prints goes to the **Serial Monitor**,
+  its own program (the *Program* tab in the Code window), as soon as the pins' code is written. Each ESP32 on a board
+  runs a program of its own, in a worker of its own. What one prints goes to the **Serial Monitor** (the selected
+  ESP32's, or the first's),
   with a warning whenever it read a pin that could have gone either way. The Inspector shows each pin's mode, what it
   reads (HIGH, LOW or "?"), its voltage and current; an unconnected pin says so rather than show a voltage that means
   nothing. The **Graph** draws each wired pin's voltage over the last 5 s, with the band between the datasheet's HIGH
@@ -157,9 +165,45 @@ The reading shows in the **Meter** window and beside the sockets. With *Guess be
 reading waits for your guess first. A lead on a wire that's tapped stays put on its half; one on a wire that's
 deleted goes back to its socket. *Put the leads away* sends them all home.
 
-## Writing a part model
+## Every part's code
 
-Each lesson has its own folder holding the part you write in it. The parts Bench gives you are in `parts/`.
+An ESP32 runs a program you write; every other part does what its source says: an LED's curve and heat, a
+switch's contacts, the ESP32's own pins. Both open in the **Code** window, below the board:
+
+- **Edit program** (in the Inspector, the Serial Monitor, or on a right-click on the chip) opens that chip's
+  program. Each ESP32 has its own.
+- **Edit source** (in the Inspector, or on a right-click) opens how the part behaves. In a project, what you save
+  is that project's own copy, for every part of that kind in it; every other project carries on with the base.
+  *Go back to the base* deletes the copy. In a lesson, the part it has you write is your lesson file; the rest are
+  read-only.
+
+To change a part in every project, change its base where it's written: the part a lesson has you write in that
+lesson's file, Bench's default in Bench's code.
+
+- **Save** (<kbd>Ctrl</kbd> <kbd>S</kbd>) and the board picks it up at once: every part running that code is rebuilt
+  from it, fresh (a hot LED starts cool, a charged capacitor empty), and an ESP32 whose program changed starts it
+  again from the top. The others carry on.
+- The editor is VS Code's (Monaco), with Bench's own engine as its types: autocomplete on `import … from 'bench'`,
+  docs on hover, and red squiggles on mistakes. Vim keys are a switch in **Settings**.
+- A file saved in your own editor (nvim, VS Code) comes in the same way. If you've unsaved changes in the Code
+  window too, it asks which to keep.
+
+Which code a part runs, the first of these that's there:
+
+1. **the project's own source**, from *Edit source*;
+2. the base: **your lesson code** while the lesson that introduces the part isn't finished (and always in that
+   lesson), then **Bench's default** once you've finished it.
+
+Before new code runs on the board it gets a trial run in a worker: built into a part in a small circuit and run for
+a few milliseconds. Code that doesn't finish in 2 s (a loop that never ends) is refused, with a card saying so,
+rather than freezing the page. If Bench ever stops while running your code anyway, it comes back with your code
+paused and a button to run it again.
+
+### Writing a part in a lesson
+
+Each lesson introduces one part you write yourself: you start from a stub, its jobs in the comment at the top, and
+the lesson's **Your turn** card opens it in the Code window. Your file lives in your home folder
+(`lessons/led.ts`, …); the stubs you start from are in this repo:
 
 ```
 packages/engine/src/
@@ -171,18 +215,40 @@ packages/engine/src/
   lesson-5-transistors/transistor.ts  your transistor: two diodes, and a current one of them steers (its curves
                                   and leads are written for you)
   lesson-6-microcontroller/gpio.ts      your microcontroller pin: input, pull-up, pull-down or output, and what it
-                                        reads; program.ts beside it is your program
+                                        reads; program.ts beside it is the program Lesson 6 starts from
   parts/                          built in: battery, resistor, wire, ground, junction, supply, slide switch,
                                   electrolytic (your capacitor, plus the leak its datasheet allows)
 ```
 
-The tests mirror it, in `packages/engine/test`. Each new lesson adds a folder the same way.
+Bench's own code for each of them, the default a part runs once its lesson is finished, is in
+`packages/engine/src/models/<part>/default.ts`. The tests mirror the lessons, in `packages/engine/test`, and run
+twice: against Bench's default, and against your file in your home folder, loaded exactly as the board loads it.
 
 1. The comment at the top of the part's file explains what it does and what to write. `parts/resistor.ts` and
    `parts/battery.ts` are worked examples.
-2. Run `pnpm test:watch`. A part's tests show as "todo" until you start, then check your model against its
+2. Run `pnpm test:watch`. Your part's tests show as "todo" until you start, then check your code against its
    datasheet.
-3. Keep `pnpm dev` open. Every save reloads the page with your part in the circuit, in whichever mode you're in.
+3. Save, in the Code window or your own editor, and your part is in the circuit at once.
+
+## Your home folder
+
+Your own work is kept in a folder you choose in **Settings**, outside this repo: it's yours, so you can make it a
+git repo of its own. Bench reads and writes it through `pnpm dev` (only on this machine, and only inside that
+folder):
+
+```
+<home>/
+  lessons/<part>.ts                 the part code you write in lessons
+  projects/<name>/project.json      a project: its name, and when it last changed
+  projects/<name>/board.json        its board
+  projects/<name>/programs/<id>.ts  each ESP32's program
+  projects/<name>/parts/<part>.ts   a part's source, edited for this project only
+  tsconfig.json                     so your own editor understands `bench` too
+```
+
+Code anywhere in it imports from `bench` (the engine), `bench/arduino` (a program's functions) and `bench/<part>`
+(another part's code, as this project runs it). A build of Bench with no dev server behind it (on your phone, say)
+keeps the same files in that browser instead. Lesson boards and lesson progress are kept in the browser.
 
 ## How the engine works
 
@@ -267,12 +333,20 @@ Inductors arrive in piece 7, with motors and flyback diodes. Temperature doesn't
 
 ```
 packages/engine   the simulator (pure TypeScript) and its tests
-  src/lesson-*    the part you write in each lesson
+  src/lesson-*    the stub for the part you write in each lesson
+  src/models      Bench's default for each of those, and what any part's code must provide (contracts.ts)
   src/parts       the parts Bench gives you
+  src/code        the loader: part code and programs from text, for the board and the tests alike
 apps/web          the bench: React + Vite
-  src/builder     the board: its document, selection, live circuit, editor and shared session
+  server          the dev server's side: your home folder, read and written
+  src/kinds       one folder per kind of part: its pins, what it reads, its symbol, Inspector rows, Graph and spec sheet
+  src/sim         the board simulated: the live circuit, the programs, and what it all reads
+  src/code        which code each part runs, its trial runs, and the Code window (Monaco, loaded when opened)
+  src/projects    projects as folders
+  src/files       your home folder, or this browser's storage
+  src/builder     the board: its document, selection, editor and shared session
   src/lessons     lessons as data, with checks on the live circuit
-  src/home        the main menu and the lesson list
+  src/home        the main menu, the lesson list, your projects and Settings
   src/three       parts in 3D (three.js with react-three-fiber and drei, loaded only when the 3D view opens):
                   core/ (units, materials, shapes, the model kit), stage/ (the view), one folder per part
   src/workspace   the windows and the dock that arranges them

@@ -10,18 +10,23 @@ export type Screen =
   | { readonly kind: 'home' }
   | { readonly kind: 'lessons' }
   | { readonly kind: 'lesson'; readonly lesson: Lesson }
-  | { readonly kind: 'build' };
+  | { readonly kind: 'boards' }
+  | { readonly kind: 'build'; readonly id: string }
+  | { readonly kind: 'settings' };
 
 export const HREF = {
   home: '#/',
   lessons: '#/lessons',
   lesson: (lesson: Lesson) => `#/lessons/${lesson.id}`,
-  build: '#/build',
+  boards: '#/build',
+  board: (id: string) => `#/build/${encodeURIComponent(id)}`,
+  settings: '#/settings',
 } as const;
 
 export function parseHash(hash: string): Screen {
   const [, first, second] = hash.replace(/^#/, '').split('/');
-  if (first === 'build') return { kind: 'build' };
+  if (first === 'settings') return { kind: 'settings' };
+  if (first === 'build') return second ? { kind: 'build', id: decodeURIComponent(second) } : { kind: 'boards' };
   if (first === 'lessons') {
     const lesson = second ? lessonById(second) : undefined;
     return lesson ? { kind: 'lesson', lesson } : { kind: 'lessons' };

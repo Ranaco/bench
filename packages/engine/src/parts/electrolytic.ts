@@ -1,4 +1,5 @@
-import { Capacitor } from '../lesson-4-capacitors/capacitor';
+import { Capacitor } from '../models/capacitor/default';
+import type { CapacitorModel, ModuleClasses } from '../models/contracts';
 import { NotWrittenYet, type Node, type Part, type Readings, type Stamp } from '../types';
 import { TICK } from '../circuit';
 
@@ -79,7 +80,7 @@ const READINGS_AT_REST: Readings = {
  * 0.01 × µF × V µA, every one in the series takes about 100 seconds.
  */
 export class Electrolytic implements Part {
-  readonly inner: Capacitor;
+  readonly inner: CapacitorModel;
   /**
    * Set while your capacitor can't remember yet (its settle isn't written).
    * Until it can, it stays out of the circuit: without a memory it would act
@@ -92,8 +93,10 @@ export class Electrolytic implements Part {
     readonly plus: Node,
     readonly minus: Node,
     readonly spec: ElectrolyticSpec = UVR_25V[1000],
+    /** The code for the capacitor inside: yours from Lesson 4, or Bench's. */
+    capacitor: ModuleClasses['capacitor'] = Capacitor,
   ) {
-    this.inner = new Capacitor(name, plus, minus, spec.farads);
+    this.inner = new capacitor(name, plus, minus, spec.farads);
     this.forgets = settleMissing(this.inner);
   }
 
@@ -124,7 +127,7 @@ export class Electrolytic implements Part {
 }
 
 /** Asks a new capacitor's settle once, with nothing across it (so it learns 0 V): is it written yet? */
-function settleMissing(capacitor: Capacitor): NotWrittenYet | undefined {
+function settleMissing(capacitor: CapacitorModel): NotWrittenYet | undefined {
   try {
     capacitor.settle(READINGS_AT_REST, TICK);
   } catch (error) {

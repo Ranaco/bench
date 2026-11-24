@@ -1,14 +1,14 @@
-import { AMBIENT_CELSIUS, awgArea, conductorOhms, JUMPER, KNOB_10K, PN2222A, RED_LED, SLIDE_SWITCH, TACT_SWITCH, type SwitchSpec } from '@bench/engine';
-import { useSyncExternalStore, type CSSProperties } from 'react';
-import { bandsFor } from '../bands';
-import { Segmented } from '../components/Segmented';
+import { AMBIENT_CELSIUS, awgArea, conductorOhms, JUMPER } from '@bench/engine';
+import { useSyncExternalStore } from 'react';
 import { formatSI } from '../format';
-import { SUPPLIES } from '../kit';
 import type { Board, PlacedPart, WireDoc } from './board';
-import { CAPACITOR_VALUES, capacitorSpec, CATALOG, RESISTOR_VALUES, supplyFor, turnOf } from './catalog';
+import { CATALOG } from './catalog';
 import { isEmpty, size, type Selection } from './selection';
 import { sheetFor } from './specs';
-import type { BoardSim, BoardSnapshot, PartReading } from './sync';
+import { amps, volts } from '../kinds/view';
+import { VIEWS } from '../kinds/views';
+import type { BoardSim, BoardSnapshot, PartReading } from '../sim';
+import type { CodeView } from '../code/asked';
 
 interface InspectorProps {
   readonly board: Board;
@@ -30,41 +30,13 @@ interface InspectorProps {
   readonly onShowSpec: () => void;
   /** Brings up the 3D window. */
   readonly onShow3d: () => void;
+  /** Brings up the Code window: at an ESP32's program, or at a part's source. */
+  readonly onShowCode?: (what: CodeView) => void;
 }
 
-/** What a switch's contacts are rated for, as its datasheet puts it. */
-const rating = (spec: SwitchSpec) =>
-  `${formatSI(spec.ratedAmps, 'A', { trim: true })} at ${formatSI(spec.ratedVolts, 'V', { trim: true })} DC`;
-
 /** A wire's resistance at room temperature, from its length, copper and its size: what the circuit uses for it. */
-/** The parts the 3D view can show, linked to the one selected. */
-const IN_3D: ReadonlySet<PlacedPart['kind']> = new Set(['knob', 'capacitor', 'transistor', 'esp32']);
-
-/** A transistor's ratings, as one line: collector current, collector-emitter voltage, heat. */
-const TRANSISTOR_LIMITS = [
-  formatSI(PN2222A.maxCollectorAmps, 'A', { trim: true }),
-  formatSI(PN2222A.maxCollectorVolts, 'V', { trim: true }),
-  formatSI(PN2222A.maxWatts, 'W', { trim: true }),
-].join(' · ');
-
-/** How a pin is set up, in words. */
-const MODE_TEXT = { input: 'input', pullup: 'input, pull-up', pulldown: 'input, pull-down', output: 'output' } as const;
-
-/** What a pin reads, in words. */
-const LEVEL_TEXT = { high: 'HIGH', low: 'LOW', unknown: '? (could be either)' } as const;
-
-/** What a transistor's state means, in a few words. */
-const TRANSISTOR_STATE = {
-  off: 'Off: nothing into the base, so nothing through',
-  amplifying: 'Amplifying: the base current sets the collector’s',
-  on: 'Switched fully on: the rest of the circuit sets the current',
-} as const;
-
 const wireOhms = (wire: WireDoc) => conductorOhms(JUMPER.conductor, wire.metres, awgArea(JUMPER.gauge), AMBIENT_CELSIUS);
 
-const amps = (value: number | undefined) => (value === undefined ? '—' : formatSI(value, 'A', { floor: 1e-9 }));
-const volts = (value: number) => formatSI(value, 'V', { floor: 1e-6 });
-const watts = (value: number) => formatSI(value, 'W', { floor: 1e-9 });
 
 /** What's selected, and what it's doing right now. */
 export function Inspector(props: InspectorProps) {
@@ -75,8 +47,20 @@ export function Inspector(props: InspectorProps) {
   const part = one ? board.parts.find((p) => p.id === selection.parts.at(0)) : undefined;
   const wire = one ? board.wires.find((w) => w.id === selection.wires.at(0)) : undefined;
 
-  if (part) return <PartInspector {...props} part={part} reading={snapshot.parts[part.id]} pins={snapshot.pins} />;
-  if (wire) return <WireInspector wire={wire} amps={snapshot.wires[wire.id]?.amps} onDelete={props.onDelete} />;
+  // While a program switches pins, the numbers are a meter's: averages, four times a second (see sim/readout.ts).
+  const readout = snapshot.readout;
+  if (part) {
+    return (
+      <PartInspector
+        {...props}
+        part={part}
+        reading={snapshot.parts[part.id]}
+        metered={readout?.parts[part.id]}
+        pins={readout ? { ...snapshot.pins, ...readout.pins } : snapshot.pins}
+      />
+    );
+  }
+  if (wire) return <WireInspector wire={wire} amps={readout?.wires[wire.id] ?? snapshot.wires[wire.id]?.amps} onDelete={props.onDelete} />;
   if (!isEmpty(selection)) return <GroupInspector {...props} />;
 
   return (
@@ -99,11 +83,20 @@ export function Inspector(props: InspectorProps) {
   );
 }
 
+/** A part's current, voltage and power as a meter shows them: averaged, while a program's switching pins. */
+type Metered = NonNullable<BoardSnapshot['readout']>['parts'][string];
+
 function PartInspector(
-  props: InspectorProps & { readonly part: PlacedPart; readonly reading: PartReading | undefined; readonly pins: BoardSnapshot['pins'] },
+  props: InspectorProps & {
+    readonly part: PlacedPart;
+    readonly reading: PartReading | undefined;
+    readonly metered: Metered | undefined;
+    readonly pins: BoardSnapshot['pins'];
+  },
 ) {
   const { part, reading } = props;
   const kind = CATALOG[part.kind];
+  const view = VIEWS[part.kind];
   return (
     <section className="inspector" aria-labelledby="inspector-label">
       <div className="row">
@@ -113,73 +106,19 @@ function PartInspector(
       </div>
       <p className="inspector-blurb">{kind.blurb}.</p>
 
-      {part.kind === 'battery' && (
-        <Segmented
-          label="Supply"
-          options={SUPPLIES.map((s) => ({ value: s.id, label: s.label, detail: s.detail }))}
-          value={supplyFor(part.props.supply).id}
-          onChange={(id) => {
-            props.onProp(part.id, 'supply', id);
-          }}
-        />
-      )}
-      {part.kind === 'switch' && (
-        <Segmented
-          label="Slid to"
-          options={[
-            { value: 'a', label: 'Side A', detail: 'common to A' },
-            { value: 'b', label: 'Side B', detail: 'common to B' },
-          ]}
-          value={part.props.side === 'b' ? 'b' : 'a'}
-          onChange={(side) => {
-            if (side !== (part.props.side === 'b' ? 'b' : 'a')) props.onFlip(part.id); // the side it's on already: nothing to do
-          }}
-        />
-      )}
-      {part.kind === 'button' && (
-        <div className="notice-row">
-          <p>{reading?.closed ? 'Held down: its contacts touch.' : 'Up: its contacts are apart.'}</p>
-          <button
-            type="button"
-            className="ghost"
-            aria-pressed={props.holds.has(part.id)}
-            onClick={() => {
-              props.onHold(part.id, !props.holds.has(part.id));
-            }}
-          >
-            {props.holds.has(part.id) ? 'Let go' : 'Hold down'}
-          </button>
-        </div>
-      )}
-      {part.kind === 'knob' && (
-        <KnobControl
-          turn={turnOf(part.props)}
-          onChange={(turn) => {
-            props.onProp(part.id, 'turn', turn);
-          }}
-        />
-      )}
-      {part.kind === 'capacitor' && (
-        <Segmented
-          label="Capacitance"
-          options={CAPACITOR_VALUES.map((uf) => ({ value: String(uf), label: String(uf), detail: 'µF' }))}
-          value={String(Math.round(capacitorSpec(part.props).farads * 1e6))}
-          onChange={(uf) => {
-            props.onProp(part.id, 'uf', Number(uf));
-          }}
-        />
-      )}
-      {part.kind === 'resistor' && (
-        <ResistorPicker
-          ohms={Number(part.props.ohms)}
-          onChange={(ohms) => {
-            props.onProp(part.id, 'ohms', ohms);
-          }}
+      {view.Controls && (
+        <view.Controls
+          part={part}
+          reading={reading}
+          onProp={props.onProp}
+          onFlip={props.onFlip}
+          holds={props.holds}
+          onHold={props.onHold}
         />
       )}
 
-      {reading?.transistor?.state && reading.written && <p className="part-state">{TRANSISTOR_STATE[reading.transistor.state]}</p>}
-      {reading && <Readings part={part} reading={reading} pins={props.pins} />}
+      {reading && view.state?.(reading) && <p className="part-state">{view.state(reading)}</p>}
+      {reading && <Readings part={part} reading={props.metered ? { ...reading, ...props.metered } : reading} pins={props.pins} />}
 
       {reading?.burnt && (
         <div className="notice-row">
@@ -195,50 +134,38 @@ function PartInspector(
           </button>
         </div>
       )}
-      {reading?.over && part.kind === 'led' && (
-        <p className="warning">Over its {formatSI(RED_LED.maxAmps, 'A', { trim: true })} rating: it’s heating up.</p>
-      )}
-      {reading?.over && part.kind === 'resistor' && <p className="warning">Hotter than it’s rated to run.</p>}
-      {reading?.capacitor?.reversed && (
-        <p className="warning">
-          Charged the wrong way round: minus is above plus. An electrolytic’s insulating layer only works one way,
-          which is why it has a pressure relief vent for when things go wrong. The datasheet gives no numbers for it,
-          so Bench only warns.
-        </p>
-      )}
-      {reading?.capacitor && !reading.capacitor.reversed && reading.over && (
-        <p className="warning">{`Charged past its ${String(reading.capacitor.ratedVolts)} V rating.`}</p>
-      )}
-      {reading?.over && part.kind === 'knob' && (
-        <p className="warning">
-          {`Over its ${formatSI(KNOB_10K.ratedWatts, 'W', { trim: true })} rating: a carbon track run this hot wears and chars. The datasheet has no heat data, so Bench only warns.`}
-        </p>
-      )}
-      {reading?.over && part.kind === 'esp32' && (
-        <p className="warning">
-          A pin is past what the datasheet allows: more than its typical 40 mA out or 28 mA in, or a voltage outside
-          −0.3 to 3.6 V. Bench doesn’t model the damage, so it only warns.
-        </p>
-      )}
-      {reading?.over && part.kind === 'transistor' && (
-        <p className="warning">
-          {`Past what its datasheet allows (${TRANSISTOR_LIMITS}). Bench doesn’t model a transistor’s heat, so it only warns.`}
-        </p>
-      )}
-      {reading?.over && (part.kind === 'switch' || part.kind === 'button') && (
-        <p className="warning">
-          {`More current than its contacts are rated for (${rating(part.kind === 'switch' ? SLIDE_SWITCH : TACT_SWITCH)}). The datasheet doesn’t say how long they’d last, so Bench won’t guess.`}
-        </p>
-      )}
+      {reading?.over && view.overWarning && <p className="warning">{view.overWarning(part, reading)}</p>}
 
-      {(sheetFor(part.kind, part.props) !== undefined || IN_3D.has(part.kind)) && (
+      {(sheetFor(part.kind, part.props) !== undefined || view.in3d === true || kind.modules.length > 0) && (
         <div className="see-also">
+          {part.kind === 'esp32' && props.onShowCode && (
+            <button
+              type="button"
+              className="ghost spec-link"
+              onClick={() => {
+                props.onShowCode?.({ view: 'program' });
+              }}
+            >
+              Edit program
+            </button>
+          )}
+          {kind.modules.length > 0 && props.onShowCode && (
+            <button
+              type="button"
+              className="ghost spec-link"
+              onClick={() => {
+                props.onShowCode?.({ view: 'source' });
+              }}
+            >
+              Edit source
+            </button>
+          )}
           {sheetFor(part.kind, part.props) && (
             <button type="button" className="ghost spec-link" onClick={props.onShowSpec}>
               Spec sheet
             </button>
           )}
-          {IN_3D.has(part.kind) && (
+          {view.in3d && (
             <button type="button" className="ghost spec-link" onClick={props.onShow3d}>
               See it in 3D
             </button>
@@ -321,97 +248,7 @@ function Readings(props: {
 }) {
   const { part, reading } = props;
   const pin = (id: string) => props.pins[`${part.id}.${id}`] ?? 0;
-  const rows: [string, string][] = [];
-  switch (part.kind) {
-    case 'switch': {
-      const open = part.props.side === 'b' ? 'a' : 'b';
-      rows.push([`Current, common to side ${part.props.side === 'b' ? 'B' : 'A'}`, amps(reading.amps)]);
-      rows.push([`Across the open side, ${open.toUpperCase()}`, volts(Math.abs(pin('common') - pin(open)))]);
-      rows.push(['Contacts rated for', rating(SLIDE_SWITCH)]);
-      break;
-    }
-    case 'button':
-      rows.push(['Current through it', amps(reading.amps)]);
-      rows.push(['Across it', volts(Math.abs(reading.volts))]);
-      rows.push(['Contacts rated for', rating(TACT_SWITCH)]);
-      break;
-    case 'battery':
-      rows.push(['Current out of +', amps(reading.amps)]);
-      rows.push(['Across its terminals', volts(reading.volts)]);
-      // What reaches the circuit: whatever its internal resistance burns is already taken off.
-      rows.push(['Into the circuit', watts(Math.max(0, -reading.watts))]);
-      break;
-    case 'ground':
-      rows.push(['Current into ground', amps(reading.amps)]);
-      break;
-    case 'knob': {
-      const knob = reading.knob;
-      if (!knob) break;
-      rows.push(['Pin 1 to the wiper', `${formatSI(knob.legs[0], 'Ω', { digits: 3 })} · ${volts(knob.volts[0])}`]);
-      rows.push(['Wiper to pin 3', `${formatSI(knob.legs[1], 'Ω', { digits: 3 })} · ${volts(knob.volts[1])}`]);
-      rows.push(['Current out of the wiper', amps(knob.wiperAmps)]);
-      rows.push(['Turning into heat', watts(reading.watts)]);
-      rows.push(['Rated for', formatSI(KNOB_10K.ratedWatts, 'W', { trim: true })]);
-      break;
-    }
-    case 'capacitor': {
-      const cap = reading.capacitor;
-      if (!cap) break;
-      const flowing = reading.amps ?? 0;
-      rows.push(['Holding', volts(cap.held)]);
-      rows.push([flowing >= 0 ? 'Current in, filling it' : 'Current out, emptying it', amps(Math.abs(flowing))]);
-      // ½ × C × V²: what it took to charge it, and what it can give back.
-      rows.push(['Energy stored', formatSI(0.5 * cap.farads * cap.held ** 2, 'J', { digits: 3 })]);
-      const spec = capacitorSpec(part.props);
-      rows.push(['Leak across it, the worst allowed', formatSI(spec.ratedVolts / spec.leakAmps, 'Ω', { digits: 3 })]);
-      rows.push(['Rated for', formatSI(cap.ratedVolts, 'V', { trim: true })]);
-      break;
-    }
-    case 'esp32': {
-      const chip = reading.chip;
-      if (!chip) break;
-      rows.push(['3V3 to GND', volts(reading.volts)]);
-      rows.push(['Out of its 3.3 V supply', amps(chip.supplyAmps)]);
-      const idle: string[] = [];
-      for (const pin of Object.values(chip.pins)) {
-        // A plain input nothing holds (bare, or wired to something that doesn't: an open button, an LED that's off):
-        // not worth a row of its own.
-        if (pin.mode === 'input' && pin.floating) {
-          idle.push(`GPIO${String(pin.gpio)}`);
-          continue;
-        }
-        const level = pin.mode === 'output' ? (pin.high ? 'driving HIGH' : 'driving LOW') : pin.level ? LEVEL_TEXT[pin.level] : '—';
-        const at = pin.floating ? 'floating' : volts(pin.volts);
-        const analog = pin.analog === undefined ? '' : ` · analogRead ${String(pin.analog)}`;
-        const current = pin.mode === 'input' || pin.amps === undefined ? '' : ` · ${amps(pin.amps)}`;
-        rows.push([`GPIO${String(pin.gpio)}`, `${MODE_TEXT[pin.mode]} · ${level} · ${at}${analog}${current}`]);
-      }
-      if (idle.length > 0) rows.push(['Floating inputs', idle.join(', ')]);
-      break;
-    }
-    case 'transistor': {
-      const q = reading.transistor;
-      if (!q) break;
-      rows.push(['Into the base', amps(q.baseAmps)]);
-      rows.push(['Collector to emitter', amps(q.collectorAmps)]);
-      // The gain only means something while there's base current to divide by, and a collector current to divide.
-      if (q.state !== 'off' && q.collectorAmps !== undefined) {
-        rows.push(['Collector ÷ base', `× ${(q.collectorAmps / q.baseAmps).toFixed(0)}`]);
-      }
-      rows.push(['Across it, collector to emitter', volts(q.collectorVolts)]);
-      rows.push(['Base to emitter', volts(q.baseVolts)]);
-      rows.push(['Turning into heat', watts(reading.watts)]);
-      rows.push(['Rated for', TRANSISTOR_LIMITS]);
-      break;
-    }
-    case 'resistor':
-    case 'led':
-      rows.push(['Current through it', amps(reading.amps)]);
-      rows.push(['Across it', volts(reading.volts)]);
-      rows.push(['Turning into heat' + (part.kind === 'led' ? ' and light' : ''), watts(reading.watts)]);
-      if (reading.celsius !== undefined) rows.push([part.kind === 'led' ? 'Junction' : 'Body', `${reading.celsius.toFixed(1)} °C`]);
-      break;
-  }
+  const rows = VIEWS[part.kind].rows?.(part, reading, pin) ?? [];
   return (
     <dl className="readings">
       {rows.map(([name, value]) => (
@@ -456,79 +293,5 @@ function WireInspector(props: { readonly wire: WireDoc; readonly amps: number | 
         </button>
       </div>
     </section>
-  );
-}
-
-/** How far a knob is turned, as a slider: left is all the way towards pin 1, right towards pin 3. */
-function KnobControl({ turn, onChange }: { readonly turn: number; readonly onChange: (turn: number) => void }) {
-  const degrees = `${String(Math.round(turn * KNOB_10K.turnDegrees))}° of ${String(KNOB_10K.turnDegrees)}°`;
-  const fill = { '--fill': `${String(turn * 100)}%` } as CSSProperties;
-  return (
-    <div className="resistor-control">
-      <div className="row">
-        <span id="knob-label" className="field-label">
-          Turned
-        </span>
-        <output htmlFor="knob">{degrees}</output>
-      </div>
-      <input
-        id="knob"
-        type="range"
-        min={0}
-        max={1000}
-        step={1}
-        value={Math.round(turn * 1000)}
-        style={fill}
-        aria-labelledby="knob-label"
-        aria-valuetext={degrees}
-        onChange={(event) => {
-          onChange(Number(event.target.value) / 1000);
-        }}
-      />
-      <div className="row knob-ends" aria-hidden="true">
-        <span>towards pin 1</span>
-        <span>towards pin 3</span>
-      </div>
-    </div>
-  );
-}
-
-/** Picks a value from the kit's resistors, with its colour bands. */
-function ResistorPicker({ ohms, onChange }: { readonly ohms: number; readonly onChange: (ohms: number) => void }) {
-  const index = Math.max(0, RESISTOR_VALUES.indexOf(ohms));
-  const last = RESISTOR_VALUES.length - 1;
-  const bands = bandsFor(ohms);
-  const label = formatSI(ohms, 'Ω', { trim: true });
-  const fill = { '--fill': `${String((index / last) * 100)}%` } as CSSProperties;
-  return (
-    <div className="resistor-control">
-      <div className="row">
-        <span id="picker-label" className="field-label">
-          Value
-        </span>
-        <span className="resistor-value">
-          <span className="mini-resistor" title={bands.map((b) => b.name).join(', ')} aria-hidden="true">
-            {bands.map((band, i) => (
-              <span key={i} style={{ background: band.color }} />
-            ))}
-          </span>
-          <output htmlFor="picker">{label}</output>
-        </span>
-      </div>
-      <input
-        id="picker"
-        type="range"
-        min={0}
-        max={last}
-        step={1}
-        value={index}
-        style={fill}
-        aria-labelledby="picker-label"
-        aria-valuetext={label}
-        onChange={(event) => {
-          onChange(RESISTOR_VALUES[Number(event.target.value)]);
-        }}
-      />
-    </div>
   );
 }

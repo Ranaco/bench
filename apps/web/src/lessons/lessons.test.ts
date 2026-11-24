@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { addWire, EMPTY_BOARD, removePart, removeWire, setProp, type Board } from '../builder/board';
 import { gpioWritten, ledLoop, place } from '../builder/fixtures';
 import { METER_START, type MeterState } from '../builder/meter';
-import { BoardSim } from '../builder/sync';
+import { BoardSim } from '../sim';
 import { A_KNOB, CAPACITORS, LIGHT_AN_LED, MICROCONTROLLER, SWITCHES_AND_BUTTONS, TRANSISTORS, type Lesson } from './lessons';
 import { advance, backTo, currentStep } from './progress';
 

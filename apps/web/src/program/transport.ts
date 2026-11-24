@@ -1,5 +1,5 @@
-import { FRESH, isDue, ProgramMistake, type ProgramTransport, type RunnerState, type Snapshot, type Writes } from '@bench/engine';
-import type { FromWorker } from './worker';
+import { FRESH, isDue, ProgramMistake, type ModuleSource, type ProgramTransport, type RunnerState, type Snapshot, type Writes } from '@bench/engine';
+import type { FromWorker, ToWorker } from './worker';
 
 /**
  * How long, in real time, the program may take to reach its next delay() or finish a loop() before Bench calls it
@@ -8,9 +8,14 @@ import type { FromWorker } from './worker';
  */
 export const WATCHDOG_MS = 3000;
 
-/** Runs your program in a worker, one snapshot at a time, and stops it if it gets stuck. */
+/** Runs one chip's program in a worker of its own, one snapshot at a time, and stops it if it gets stuck. */
 export class WorkerTransport implements ProgramTransport {
   private worker: Worker | undefined = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+
+  /** `program` is the program's code, as text. */
+  constructor(program: ModuleSource) {
+    this.worker?.postMessage({ load: program } satisfies ToWorker);
+  }
   private state: RunnerState = FRESH;
   /** Ends the resume in flight, if there is one: for stop(). */
   private abandon: (() => void) | undefined;
@@ -51,7 +56,7 @@ export class WorkerTransport implements ProgramTransport {
           resolve(event.data.writes);
         }
       };
-      worker.postMessage(snapshot);
+      worker.postMessage(snapshot satisfies ToWorker);
     });
   }
 

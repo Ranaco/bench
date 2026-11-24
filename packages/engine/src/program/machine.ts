@@ -1,6 +1,6 @@
 import { Circuit, TICK } from '../circuit';
-import type { Esp32 } from '../parts/esp32';
-import { NotWrittenYet, type Unwritten } from '../types';
+import type { Esp32Model } from '../models/contracts';
+import { NotWrittenYet, type Node, type Unwritten } from '../types';
 import { adcReading, type AdcUnit } from './adc';
 import type { Snapshot, Writes } from './runner';
 
@@ -8,6 +8,27 @@ import type { Snapshot, Writes } from './runner';
 export interface ProgramTransport {
   due(millis: number): boolean;
   resume(snapshot: Snapshot): Promise<Writes>;
+}
+
+/** One pin over a stretch of ticks, as a meter would show it. */
+export interface PinAverage {
+  /** Average volts against the chip's GND. */
+  readonly volts: number;
+  /** Average amps out of the pin, by your pin's current(). */
+  readonly amps: number;
+  /** The share of the ticks it spent driving HIGH, 0 to 1. */
+  readonly highShare: number;
+  /** How many times it went between driving HIGH and not. */
+  readonly switches: number;
+}
+
+/** Every pin over the ticks since the last ask, and the chip's supply over the same ticks. */
+export interface Averages {
+  readonly seconds: number;
+  /** By GPIO number. */
+  readonly pins: ReadonlyMap<number, PinAverage>;
+  /** Average amps out of the 3V3 supply. */
+  readonly supplyAmps: number;
 }
 
 /** A pin the program read while it could have read either way. */
@@ -32,10 +53,22 @@ export class Machine {
   /** What stopped the program, once something has: a mistake, a crash. It doesn't run again. */
   failure: unknown;
   private pending = 0;
+  /**
+   * The program's last pinMode() and digitalWrite() calls, waiting for the next tick's solve. Made as it begins, not
+   * as the program writes them, so between ticks every pin still is what the circuit was last solved with: a pin
+   * just set HIGH, with the voltage from while it was LOW, would seem to push 194 mA.
+   */
+  private queued: Pick<Writes, 'modes' | 'levels'> = { modes: [], levels: [] };
+  /** Each pin's sums over the ticks since takeAverages() last ran, by GPIO number, and how many ticks. */
+  private readonly sums = new Map<number, { volts: number; amps: number; high: number; switches: number }>();
+  private sampled = 0;
+  private supplySum = 0;
+  /** Whether each pin was driving HIGH last tick, to count its switches. */
+  private readonly wasHigh = new Map<number, boolean>();
 
   constructor(
     readonly circuit: Circuit,
-    readonly chip: Esp32,
+    readonly chip: Esp32Model,
     readonly program: ProgramTransport,
     /** Which converter each pin that analogRead() can read is on. */
     readonly adc: Readonly<Partial<Record<number, AdcUnit>>> = {},
@@ -70,15 +103,27 @@ export class Machine {
     const due = Math.floor(this.pending / TICK + 1e-9);
     this.pending = Math.max(0, this.pending - due * TICK);
     for (let i = 0; i < due; i++) {
+      this.beforeTick();
       const { converged } = this.circuit.step(TICK);
-      if (!converged || this.failure !== undefined || this.unwritten().length > 0) continue;
-      const millis = Math.round(this.circuit.time * 1000);
-      if (!this.program.due(millis)) continue;
-      try {
-        this.apply(millis, await this.program.resume(this.snapshot(millis)));
-      } catch (error) {
-        this.failure = error;
-      }
+      await this.afterTick(converged);
+    }
+  }
+
+  /** Just before a tick's solve: the pins as the program last set them. */
+  beforeTick(): void {
+    this.setPins();
+  }
+
+  /** Just after a tick's solve: the pins sampled, and the program run if it's due, against what they read now. */
+  async afterTick(converged: boolean): Promise<void> {
+    if (!converged || this.failure !== undefined || this.unwritten().length > 0) return;
+    this.sample();
+    const millis = Math.round(this.circuit.time * 1000);
+    if (!this.program.due(millis)) return;
+    try {
+      this.apply(millis, await this.program.resume(this.snapshot(millis)));
+    } catch (error) {
+      this.failure = error;
     }
   }
 
@@ -99,15 +144,59 @@ export class Machine {
     return { millis, pins, analog, supplyVolts: this.chip.spec.supplyVolts };
   }
 
-  private apply(millis: number, writes: Writes): void {
-    for (const [pin, mode] of writes.modes) {
+  /**
+   * Every pin's average over the ticks since this was last called, and starts again; undefined with no ticks since.
+   * A pin a program switches every few milliseconds is HIGH at one moment and LOW the next: its average, like the
+   * reading on a multimeter, is what can be read.
+   */
+  takeAverages(): Averages | undefined {
+    const ticks = this.sampled;
+    if (ticks === 0) return undefined;
+    const pins = new Map<number, PinAverage>();
+    for (const [number, sum] of this.sums) {
+      pins.set(number, { volts: sum.volts / ticks, amps: sum.amps / ticks, highShare: sum.high / ticks, switches: sum.switches });
+    }
+    const averages = { seconds: ticks * TICK, pins, supplyAmps: this.supplySum / ticks };
+    this.sums.clear();
+    this.sampled = 0;
+    this.supplySum = 0;
+    return averages;
+  }
+
+  /** Adds the tick just solved to every pin's running sums. */
+  private sample(): void {
+    const c = this.circuit;
+    const readings = { time: c.time, dt: TICK, ambient: c.ambient, voltage: (node: Node) => c.voltage(node), across: (a: Node, b: Node) => c.across(a, b), branchCurrent: () => 0 };
+    for (const [number, gpio] of this.chip.pins) {
+      const high = gpio.mode === 'output' && gpio.high;
+      const sum = this.sums.get(number) ?? { volts: 0, amps: 0, high: 0, switches: 0 };
+      sum.volts += c.across(gpio.pin, this.chip.gnd);
+      sum.amps += gpio.current(readings);
+      if (high) sum.high++;
+      if (this.wasHigh.has(number) && this.wasHigh.get(number) !== high) sum.switches++;
+      this.wasHigh.set(number, high);
+      this.sums.set(number, sum);
+    }
+    this.supplySum += c.currentThrough(this.chip) ?? 0;
+    this.sampled++;
+  }
+
+  /** Sets the pins as the program last asked, just before a solve. */
+  private setPins(): void {
+    const { modes, levels } = this.queued;
+    this.queued = { modes: [], levels: [] };
+    for (const [pin, mode] of modes) {
       const gpio = this.chip.pins.get(pin);
       if (gpio) gpio.mode = mode;
     }
-    for (const [pin, high] of writes.levels) {
+    for (const [pin, high] of levels) {
       const gpio = this.chip.pins.get(pin);
       if (gpio) gpio.high = high;
     }
+  }
+
+  private apply(millis: number, writes: Writes): void {
+    this.queued = { modes: [...this.queued.modes, ...writes.modes], levels: [...this.queued.levels, ...writes.levels] };
     // The last 20,000 characters: enough to scroll back through, without growing forever.
     this.serial = (this.serial + writes.printed).slice(-20000);
     for (const pin of writes.floating) this.floating.push({ millis, pin });

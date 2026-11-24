@@ -1,5 +1,6 @@
+import type { ModuleClasses } from '@bench/engine';
 import type { ReactNode } from 'react';
-import type { CAPACITOR_VALUES } from '../builder/catalog';
+import type { CAPACITOR_VALUES } from '../kinds/capacitor/model';
 import { CapacitorView } from './capacitor/CapacitorView';
 import { DevKitCView, type DevKitCLive } from './esp32/DevKitCView';
 import { KnobView, type KnobLive } from './knob/KnobView';
@@ -13,6 +14,8 @@ export type Subject =
       readonly onTurn: (turn: number) => void;
       readonly label: string | undefined;
       readonly live: KnobLive | undefined;
+      /** The code the knob on the board runs, for its legs: Bench's default when there's none linked. */
+      readonly potentiometer?: ModuleClasses['potentiometer'];
     }
   | {
       readonly kind: 'capacitor';
@@ -38,7 +41,7 @@ export type Subject =
  */
 export default function Viewer3d({ subject, note, chooser }: { readonly subject: Subject; readonly note?: string; readonly chooser?: ReactNode }) {
   if (subject.kind === 'knob') {
-    return <KnobView turn={subject.turn} onTurn={subject.onTurn} label={subject.label} live={subject.live} note={note} chooser={chooser} />;
+    return <KnobView turn={subject.turn} onTurn={subject.onTurn} label={subject.label} live={subject.live} note={note} chooser={chooser} potentiometer={subject.potentiometer} />;
   }
   if (subject.kind === 'esp32') {
     return <DevKitCView label={subject.label} live={subject.live} note={note} chooser={chooser} />;
