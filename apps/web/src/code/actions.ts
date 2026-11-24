@@ -14,6 +14,7 @@ const LESSON_FOLDERS: Readonly<Partial<Record<string, ModuleId>>> = {
   'lesson-4-capacitors/capacitor': 'capacitor',
   'lesson-5-transistors/transistor': 'transistor',
   'lesson-6-microcontroller/gpio': 'gpio',
+  'lesson-7-motors/motor': 'motor',
 };
 
 /** The engine's own files that `bench` stands for. */

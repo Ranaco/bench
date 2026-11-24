@@ -16,6 +16,7 @@ export const LESSON_FILES = {
   capacitor: 'lesson-4-capacitors/capacitor.ts',
   transistor: 'lesson-5-transistors/transistor.ts',
   gpio: 'lesson-6-microcontroller/gpio.ts',
+  motor: 'lesson-7-motors/motor.ts',
 } as const satisfies Partial<Record<ModuleId, string>>;
 
 export type LessonModule = keyof typeof LESSON_FILES;

@@ -8,7 +8,9 @@ import * as monaco from 'monaco-editor/editor/editor.api';
 import 'monaco-editor/editor/editor.main';
 import { ModuleKind, ModuleResolutionKind, ScriptTarget, typescriptDefaults } from 'monaco-editor/languages/features/typescript/register';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
-import TsWorker from 'monaco-editor/languages/features/typescript/ts.worker?worker';
+import { completions } from './completions';
+// Monaco's TypeScript worker, asking for what it leaves out: names not imported yet, and their imports.
+import TsWorker from './ts.worker?worker';
 
 (self as unknown as { MonacoEnvironment: { getWorker(id: string, label: string): Worker } }).MonacoEnvironment = {
   getWorker: (_id, label) => (label === 'typescript' || label === 'javascript' ? new TsWorker() : new EditorWorker()),
@@ -40,6 +42,9 @@ typescriptDefaults.setCompilerOptions({
   lib: ['es2023'],
 });
 typescriptDefaults.setEagerModelSync(true);
+// Bench's own completions instead of Monaco's: they offer names you haven't imported yet, and add the import.
+typescriptDefaults.setModeConfiguration({ ...typescriptDefaults.modeConfiguration, completionItems: false });
+monaco.languages.registerCompletionItemProvider('typescript', completions);
 
 for (const [path, text] of Object.entries(ENGINE)) {
   const rel = path.slice(path.indexOf('/engine/src/') + '/engine/src/'.length);

@@ -1,4 +1,4 @@
-import { ESP32_GPIO, PN2222A, RED_LED } from '@bench/engine';
+import { ENERGIZER_522, ESP32_GPIO, FAULHABER_1516_009SR, PN2222A, RED_LED, VISHAY_1N4007 } from '@bench/engine';
 import { netsOf, type Board, type PartKind, type PinRef, type PlacedPart } from '../builder/board';
 import { CATALOG } from '../builder/catalog';
 import { supplyFor } from '../kinds/battery/model';
@@ -619,12 +619,120 @@ export const MICROCONTROLLER: Lesson = {
     'A microcontroller reads the world as HIGH, LOW or a number, and answers through its pins: a few milliamps each, so a transistor does the heavy lifting. Next, motors: a transistor switching something that fights back. Build mode has the ESP32 too.',
 };
 
-export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS, TRANSISTORS, MICROCONTROLLER];
+
+/** Each motor that's in the circuit, with what it's doing. */
+function motors({ board, snapshot }: LessonState) {
+  return ofKind(board, 'motor').flatMap((part) => {
+    const reading = snapshot.parts[part.id];
+    return reading?.written && reading.motor ? [{ part, amps: reading.amps ?? 0, volts: reading.volts, ...reading.motor }] : [];
+  });
+}
+
+/**
+ * Its current is what's left of the volts across it after its back-EMF, through its winding (to 5 %): it pushes back.
+ * One that doesn't draws all its volts allow, however fast it turns.
+ */
+const pushesBack = (m: { readonly volts: number; readonly backEmf: number; readonly amps: number }) =>
+  Math.abs(m.volts - m.backEmf - m.amps * MOTOR.ohms) <= 0.05 * Math.abs(m.volts);
+
+const MOTOR = FAULHABER_1516_009SR;
+
+/** Held still on the 9 V battery: only the winding and the battery's own resistance hold the current back. */
+const STALL_AMPS = ENERGIZER_522.volts / (MOTOR.ohms + ENERGIZER_522.ohms);
+
+/** Turning at least this fast counts as up to speed: three quarters of what its datasheet gives with nothing on it. */
+const UP_TO_SPEED = 0.75 * MOTOR.noLoadRpm;
+
+/** A diode across a motor, the right way round to catch its kick: its band (cathode) to the motor's +. */
+function diodeAcrossMotor(board: Board): boolean {
+  const net = netsOf(board);
+  return ofKind(board, 'diode').some((diode) =>
+    ofKind(board, 'motor').some(
+      (motor) =>
+        net({ part: diode.id, pin: 'cathode' }) === net({ part: motor.id, pin: 'plus' }) &&
+        net({ part: diode.id, pin: 'anode' }) === net({ part: motor.id, pin: 'minus' }),
+    ),
+  );
+}
+
+/** A motor carrying a transistor's collector current (within 2 %, as for an LED). */
+const motorOnCollector = (state: LessonState, collectorAmps: number | undefined) =>
+  collectorAmps !== undefined && collectorAmps > 0 && motors(state).some((m) => Math.abs(m.amps - collectorAmps) <= 0.02 * collectorAmps);
+
+const volts = (v: number) => formatSI(v, 'V', { trim: true });
+
+export const MOTORS: Lesson = {
+  id: 'motors',
+  number: 7,
+  title: 'Motors',
+  goal: 'Spin a motor, feel it fight back, switch it from your program, catch the kick it gives, and slow it with PWM.',
+  parts: ['battery', 'resistor', 'led', 'button', 'knob', 'transistor', 'diode', 'motor', 'esp32', 'ground'],
+  steps: [
+    {
+      id: 'spin',
+      title: 'Spin it from the battery',
+      detail: `Wire the 9 V battery’s + to the motor’s +, and the motor’s − back to the battery’s −. Select it: turning freely, it draws only about ${ma(MOTOR.noLoadAmps)}. Guess before the next step: held still, will it draw more, or less?`,
+      // Up to speed on a running motor's current, pushing back: one that doesn't yet only runs away, and on a small enough
+      // current (through a resistor, or from a pin) it passes the speed with little current too.
+      passes: (state) =>
+        motors(state).some((m) => !m.held && Math.abs(m.rpm) >= UP_TO_SPEED && Math.abs(m.amps) <= 2 * MOTOR.noLoadAmps && pushesBack(m)),
+    },
+    {
+      id: 'hold',
+      title: 'Hold its shaft',
+      detail: `Press and hold the middle of the motor (or Hold its shaft, in the Inspector). Its current jumps back up, to about ${ma(STALL_AMPS)}: the battery’s ${volts(ENERGIZER_522.volts)} over the motor’s ${String(MOTOR.ohms)} Ω winding and the battery’s own ${String(ENERGIZER_522.ohms)} Ω. Turning, a motor is also a generator: it makes a voltage of its own (“Pushing back as it turns”), and only what’s left over drives current. Held still, there’s none, and everything it draws turns to heat: more than the ${ma(MOTOR.ratedAmps)} it can carry for long. Let go, and it’s back up to speed in a fraction of a second.`,
+      passes: (state) => motors(state).some((m) => m.held && m.amps >= 0.75 * STALL_AMPS),
+    },
+    {
+      id: 'switch',
+      title: 'Switch it from your program',
+      detail: `As in Lesson 6: GPIO5 → 1 kΩ → the transistor’s base, its emitter → GND. The motor goes where the LED was: battery + → motor + → motor − → collector, and the battery’s − to the ESP32’s GND. Use 1 kΩ, not 10 kΩ: starting, the motor wants ${ma(STALL_AMPS)}, and through 10 kΩ the base gets too little for its gain of about ${String(Math.round(PN2222A.forwardGain))} to let that much through. In your program, turn GPIO5 on for a second and off for a second, over and over.`,
+      passes: (state) =>
+        transistors(state).some((q) => q.state === 'on' && motorOnCollector(state, q.collectorAmps) && fedByChip(state, q.baseAmps)),
+    },
+    {
+      id: 'kick',
+      title: 'Meet the kick',
+      detail: `Select the transistor and watch “Highest in the last second” as GPIO5 goes LOW. A coil’s current can’t stop at once: switched off, the motor’s winding pushes the collector up until something gives. Here that’s the transistor itself, breaking down at its ${volts(PN2222A.maxCollectorVolts)} rating, and the warning shows. It’s over in about a millionth of a second, far too fast to see any other way.`,
+      passes: (state) => motors(state).length > 0 && transistors(state).some((q) => (q.highestVolts ?? 0) > PN2222A.maxCollectorVolts),
+    },
+    {
+      id: 'catch',
+      title: 'Catch it with a diode',
+      detail: `Put a diode across the motor, its band (the cathode) to the motor’s +. It points the wrong way to carry anything while the motor runs. Switched off, the winding’s current goes round through it instead, and the collector stops just above the battery, a diode’s drop over it. A ${String(VISHAY_1N4007.ratedAmps)} A 1N4007 is the usual one.`,
+      passes: (state) => {
+        const battery = biggestBattery(state.board);
+        return (
+          battery !== undefined &&
+          diodeAcrossMotor(state.board) &&
+          transistors(state).some((q) => q.highestVolts !== undefined && q.highestVolts > battery && q.highestVolts < PN2222A.maxCollectorVolts)
+        );
+      },
+    },
+    {
+      id: 'speed',
+      title: 'Slow it down with PWM',
+      detail:
+        'Your dimmer from Lesson 6, on GPIO5: on for 5 ms, off for 5 ms, over and over. Guess first: half on, so half speed? Try it. Then find an on and off that really slows it, to under three quarters of full speed. (The diode stays: it catches a kick a hundred times a second now.)',
+      // Settled there, averaged through the ripple: a motor speeding up from rest passes through the range on its way.
+      passes: (state) =>
+        state.snapshot.readout !== undefined &&
+        motors(state).some((m) => {
+          const rpm = Math.abs(m.averageRpm ?? 0);
+          return !m.held && m.steady && rpm >= 0.1 * MOTOR.noLoadRpm && rpm <= 0.75 * MOTOR.noLoadRpm;
+        }),
+    },
+  ],
+  outro:
+    'A motor is a resistor, a coil and a generator in one: it draws most starting and held still, least running free, and its coil kicks when switched off, so a diode goes across it. With nothing to turn, it coasts through PWM’s off-time, so half on is nearly full speed: it only slows once the on-time can barely keep up with its friction. Next, direction and power: running it backwards, and keeping the ESP32 alive when a motor starts. Build mode has the motor and diode too.',
+};
+
+export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS, TRANSISTORS, MICROCONTROLLER, MOTORS];
 
 export const lessonById = (id: string) => LESSONS.find((lesson) => lesson.id === id);
 
 /** What's coming, from the roadmap: shown locked, so the path ahead is visible. */
 export const COMING: readonly { readonly number: number; readonly title: string; readonly blurb: string }[] = [
-  { number: 7, title: 'Motors', blurb: 'H-bridges, flyback diodes and brownouts, where your capacitors and transistors come back.' },
-  { number: 8, title: 'The car', blurb: 'A 2D robot body, steered by your phone.' },
+  { number: 8, title: 'Direction and power', blurb: 'A motor driver to run it both ways, and a brownout, where your capacitor comes back.' },
+  { number: 9, title: 'The car', blurb: 'A 2D robot body, steered by your phone.' },
 ];

@@ -33,6 +33,13 @@ export interface Curve {
    * it to aim its next guess, so a wrong slope stops the circuit settling.
    */
   slope(volts: number): number;
+  /**
+   * Optional: the volts it turns on at, for a curve that only wakes up far
+   * from zero (a breakdown). The solver's guesses may jump straight up to
+   * just past it, then climb carefully from there, as they do near zero for
+   * a diode.
+   */
+  readonly knee?: number;
 }
 
 /**
@@ -112,6 +119,13 @@ export interface Part {
    * after the solver has settled, so the readings can be trusted.
    */
   settle?(r: Readings, dt: number): void;
+  /**
+   * Optional: true for a part that can react far faster than a tick, like a
+   * coil. After anything changes all at once (a switch flips, a pin is
+   * written, a wire comes off), the next tick is taken in small steps, so
+   * that reaction can be followed. Its `dt` is then those steps.
+   */
+  readonly fast?: boolean;
 }
 
 /** The things a part does, by method name: every part stamps and has a current; some settle; a pin reads. */

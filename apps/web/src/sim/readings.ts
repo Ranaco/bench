@@ -32,6 +32,8 @@ export interface PartReading {
   readonly capacitor: CapacitorReading | undefined;
   /** For a transistor: the current into its base, and what that lets through. */
   readonly transistor: TransistorReading | undefined;
+  /** For a motor: how fast it turns, and what it pushes back with. */
+  readonly motor: MotorReading | undefined;
   /** For an ESP32 board: each GPIO pin. */
   readonly chip: ChipReading | undefined;
   /** For an LED: how many times it's come on since it was placed (or the board was loaded). */
@@ -157,6 +159,26 @@ export interface TransistorReading {
   readonly baseVolts: number;
   /** Undefined while there's no collector current to judge it by. */
   readonly state: TransistorState | undefined;
+  /**
+   * The highest volts collector to emitter in the last second, however briefly: a coil switched off kicks it up for
+   * far less than a tick. Undefined for code that doesn't keep it.
+   */
+  readonly highestVolts: number | undefined;
+}
+
+export interface MotorReading {
+  /** How fast its shaft turns, rpm. */
+  readonly rpm: number;
+  /** How many turns it's made since it was put on the board. */
+  readonly turns: number;
+  /** The volts it makes by turning, pushing back against its supply. */
+  readonly backEmf: number;
+  /** Its speed averaged over the last whole half second, rpm: steady through PWM's ripple. Undefined until there is one. */
+  readonly averageRpm: number | undefined;
+  /** True once that average holds: within 3 % of the half second before it. A motor still speeding up isn't. */
+  readonly steady: boolean;
+  /** True while something holds its shaft still. */
+  readonly held: boolean;
 }
 
 /** A capacitor's voltage over the last little while: what the Graph draws. */

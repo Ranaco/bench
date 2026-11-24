@@ -835,6 +835,18 @@ kbd {
   transition: stroke 300ms ease;
 }
 
+/* The M in a motor's circle. */
+.symbol-letter {
+  fill: var(--part);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* A motor's shaft: a spoke turning in its circle. */
+.motor-shaft {
+  stroke-width: 3;
+}
+
 .label,
 .value,
 .sign,

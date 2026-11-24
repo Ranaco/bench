@@ -20,6 +20,8 @@ export type PartKind =
   | 'knob'
   | 'capacitor'
   | 'transistor'
+  | 'diode'
+  | 'motor'
   | 'esp32'
   | 'junction';
 
@@ -90,6 +92,8 @@ const PREFIX: Readonly<Record<PartKind, string>> = {
   knob: 'RV',
   capacitor: 'C',
   transistor: 'Q',
+  diode: 'D',
+  motor: 'M',
   esp32: 'U',
   junction: 'J',
 };

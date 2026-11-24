@@ -111,6 +111,7 @@ export const PLAIN: Omit<PartReading, 'amps' | 'volts' | 'watts' | 'written'> = 
   knob: undefined,
   capacitor: undefined,
   transistor: undefined,
+  motor: undefined,
   chip: undefined,
   flips: undefined,
   glowing: undefined,

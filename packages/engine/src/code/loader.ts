@@ -41,6 +41,8 @@ export const CLASS_NAMES: Readonly<Record<ModuleId, string>> = {
   transistor: 'Transistor',
   gpio: 'Gpio',
   esp32: 'Esp32',
+  diode: 'Diode',
+  motor: 'Motor',
 };
 
 /** The modules a module's code builds parts of: built first, so it can use them. */
@@ -58,7 +60,9 @@ const LEGACY_MODULES: Readonly<Partial<Record<string, ModuleId>>> = {
   '../lesson-4-capacitors/capacitor': 'capacitor',
   '../lesson-5-transistors/transistor': 'transistor',
   '../lesson-6-microcontroller/gpio': 'gpio',
+  '../lesson-7-motors/motor': 'motor',
   '../parts/battery': 'battery',
+  '../parts/diode': 'diode',
   '../parts/resistor': 'resistor',
   '../parts/slide-switch': 'slide-switch',
   '../parts/electrolytic': 'electrolytic',
@@ -100,7 +104,9 @@ function evaluate(run: Compiled, file: string, resolve: (specifier: string) => u
   const module = { exports: {} as Record<string, unknown> };
   const require = (specifier: string) => {
     const found = resolve(specifier);
-    if (found === undefined) throw new CodeError(file, `Bench has nothing called '${specifier}' to import. Import from 'bench'.`);
+    if (found === undefined) {
+      throw new CodeError(file, `Bench has nothing called '${specifier}' to import. Import from 'bench', or in a program from 'bench/arduino'.`);
+    }
     return found;
   };
   run(require, module.exports, module);

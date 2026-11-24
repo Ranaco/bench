@@ -18,6 +18,12 @@ import {
 /** The engine's heartbeat, in seconds. Time always advances in whole ticks. */
 export const TICK = 0.001;
 
+/**
+ * The first of the small steps a tick is cut into after something changes all at once, with a fast part on the board
+ * (see Part.fast), s. Each step after it is twice as long, until the tick is done.
+ */
+export const FIRST_STEP = 1e-8;
+
 /** A whisper of conductance from every node to ground, so no node floats. */
 const GMIN = 1e-12;
 /** Newton guesses allowed per solve before giving up. */
@@ -158,6 +164,13 @@ export class Circuit {
   private last: Solved | undefined;
   private ticks = 0;
   private pending = 0;
+  /** True when something changed all at once since the last tick (see changed()). */
+  private sudden = false;
+  /** How far into the current tick the step being solved starts, s, and how long it is. */
+  private within = 0;
+  private stepDt = TICK;
+  /** The first small step after a sudden change (see FIRST_STEP); a test can shrink it to check it's small enough. */
+  firstStep = FIRST_STEP;
   /** Nodes given back by `release`, reused before new ones are made. */
   private readonly spare: Node[] = [];
 
@@ -185,10 +198,19 @@ export class Circuit {
     this.spare.push(node);
   }
 
+  /**
+   * Says something just changed all at once, outside the solver: a switch flipped, a pin written, a knob turned.
+   * Adding, removing or replacing a part says so itself.
+   */
+  changed(): void {
+    this.sudden = true;
+  }
+
   /** Adds a part and returns it. */
   add<P extends Part>(part: P): P {
     this.parts.push(part);
     this.measured.delete(part);
+    this.sudden = true;
     return part;
   }
 
@@ -201,6 +223,7 @@ export class Circuit {
     const index = this.parts.indexOf(part);
     if (index === -1) return;
     this.parts.splice(index, 1);
+    this.sudden = true;
     this.missing.delete(part);
     this.measured.delete(part);
     this.sums.delete(part);
@@ -219,6 +242,7 @@ export class Circuit {
     const index = this.parts.indexOf(old);
     if (index === -1) throw new Error(`${old.name} isn't in this circuit`);
     this.parts[index] = next;
+    this.sudden = true;
     this.missing.delete(old);
     this.measured.delete(old);
     this.sums.delete(old);
@@ -250,15 +274,30 @@ export class Circuit {
     let iterations = 0;
     const unsettled = new Set<string>();
     for (let i = 0; i < due; i++) {
-      const result = this.solve();
-      iterations = Math.max(iterations, result.iterations);
-      this.measure();
-      this.addToAverages();
-      if (result.converged) this.settleParts();
-      else {
-        converged = false;
-        for (const name of result.unsettled) unsettled.add(name);
+      // A tick is one step, unless something just changed all at once with a fast part on the board: then small
+      // steps, each twice the last, so the fast part's quick reaction is followed rather than jumped over.
+      const fine = this.sudden && this.parts.some((part) => part.fast === true);
+      this.sudden = false;
+      let step = fine ? this.firstStep : TICK;
+      for (this.within = 0; ; this.within += this.stepDt, step *= 2) {
+        // The last step lands exactly on the tick: one that would leave less than itself to go takes the rest.
+        const last = TICK - this.within - step < step;
+        this.stepDt = last ? TICK - this.within : step;
+        const result = this.solve();
+        iterations = Math.max(iterations, result.iterations);
+        if (last) {
+          this.measure();
+          this.addToAverages();
+        }
+        if (result.converged) this.settleParts();
+        else {
+          converged = false;
+          for (const name of result.unsettled) unsettled.add(name);
+        }
+        if (last) break;
       }
+      this.within = 0;
+      this.stepDt = TICK;
       this.ticks++;
       this.time = this.ticks * TICK;
     }
@@ -351,8 +390,8 @@ export class Circuit {
   private readings(): Readings {
     const last = this.last;
     return {
-      time: this.time,
-      dt: TICK,
+      time: this.time + this.within,
+      dt: this.stepDt,
       ambient: this.ambient,
       voltage: (node) => this.voltage(node),
       across: (a, b) => this.across(a, b),
@@ -458,7 +497,7 @@ export class Circuit {
     const readings = this.readings();
     for (const part of this.parts) {
       if (this.lacks(part, 'stamp') || this.lacks(part, 'settle')) continue;
-      this.call(part, 'settle', () => part.settle?.(readings, TICK));
+      this.call(part, 'settle', () => part.settle?.(readings, this.stepDt));
     }
   }
 
@@ -505,7 +544,7 @@ export class Circuit {
       unsettled.clear();
       for (const guessed of [...assembly.junctions, ...assembly.controlled]) {
         const reached = voltageIn(solution, guessed.a) - voltageIn(solution, guessed.b);
-        const next = limitJunction(reached, guessed.volts);
+        const next = limitJunction(reached, guessed.volts, guessed.curve.knee);
         if (next !== reached || !junctionSettled(guessed, reached)) unsettled.add(guessed.owner.name);
         this.guessesFor(guessed.owner).set(guessKey(guessed.a, guessed.b), next);
       }
@@ -516,8 +555,8 @@ export class Circuit {
 
   private assemble(): Assembly {
     const assembly = new Assembly(
-      this.time,
-      TICK,
+      this.time + this.within,
+      this.stepDt,
       this.ambient,
       () => this.nodeNames.length - 1,
       (owner, name) => this.internalNode(owner, name),
@@ -605,9 +644,9 @@ function voltageIn(solution: Float64Array, node: Node): number {
 }
 
 /** Stops a forward-biased junction leaping so far that its exponential overflows. */
-function limitJunction(reached: number, previous: number): number {
-  if (reached <= JUNCTION_KNEE || reached <= previous + JUNCTION_STEP) return reached;
-  return Math.max(previous + JUNCTION_STEP, JUNCTION_KNEE);
+function limitJunction(reached: number, previous: number, knee = 0): number {
+  if (reached <= knee + JUNCTION_KNEE || reached <= previous + JUNCTION_STEP) return reached;
+  return Math.max(previous + JUNCTION_STEP, knee + JUNCTION_KNEE);
 }
 
 /** True when the guess barely moved and the curve agrees with its straight-line estimate. */

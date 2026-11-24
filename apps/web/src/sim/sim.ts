@@ -138,7 +138,9 @@ export class BoardSim {
    */
   press(id: string, down: boolean): void {
     const live = this.live.parts.get(id);
-    if (live?.kind.press?.(live.part, down)) this.step(0);
+    if (!live?.kind.press?.(live.part, down)) return;
+    this.circuit.changed(); // sudden: a coil on the board is followed through it in small steps
+    this.step(0);
   }
 
   /** Swaps a burnt part for a fresh one of the same kind and value. */

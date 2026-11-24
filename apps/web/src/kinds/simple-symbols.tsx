@@ -1,4 +1,4 @@
-/** The symbols with nothing that moves: a battery, a resistor, a capacitor, a transistor, ground and a junction. */
+/** The symbols with nothing that moves: a battery, a resistor, a capacitor, a transistor, a diode, a motor, ground and a junction. */
 import { ZIGZAG } from './shapes';
 import { Plus, Strokes } from './symbol';
 
@@ -37,6 +37,24 @@ export function TransistorSymbol() {
         { d: 'M12,23 L3.1,22.2 L7.3,15.4 Z', className: 'arrowhead' },
       ]}
     />
+  );
+}
+
+/** A diode: the triangle points the way current may go, into the bar (the band on the real one). */
+export function DiodeSymbol() {
+  return <Strokes paths={[{ d: 'M0,-60 V-15 M0,15 V60 M-16,15 H16 M-16,-15 H16 L0,15 Z' }]} />;
+}
+
+/** A motor: a circle with an M, its + lead on top. */
+export function MotorSymbol() {
+  return (
+    <>
+      <Strokes paths={[{ d: 'M0,-60 V-26 M0,26 V60 M26,0 A26,26 0 1 1 -26,0 A26,26 0 1 1 26,0' }]} />
+      <text className="symbol-letter" x={0} y={5} textAnchor="middle">
+        M
+      </text>
+      <Plus x={10} y={-34} />
+    </>
   );
 }
 

@@ -15,11 +15,15 @@ export { Electrolytic, UVR_25V, type ElectrolyticSpec } from './parts/electrolyt
 export { PN2222A, Transistor, type Inside, type TransistorSpec } from './models/transistor/default';
 export { ESP32_GPIO, Gpio, type GpioMode, type GpioSpec, type Level } from './models/gpio/default';
 export { Esp32 } from './parts/esp32';
+export { Diode, VISHAY_1N4007, type DiodeSpec } from './parts/diode';
+export { FAULHABER_1516_009SR, Motor, type MotorSpec } from './models/motor/default';
 export {
   MODULES,
   type BatteryModel,
   type CapacitorModel,
   type Code,
+  type DiodeModel,
+  type MotorModel,
   type ElectrolyticModel,
   type Esp32Model,
   type GpioModel,

@@ -40,7 +40,7 @@ const TRANSISTOR_SHEET: SpecSheet = {
       ],
     },
     {
-      title: 'Limits (warned, not simulated)',
+      title: 'Limits',
       fields: [
         field(
           'Collector current',
@@ -51,7 +51,15 @@ const TRANSISTOR_SHEET: SpecSheet = {
           'onsemi’s KSP2222A sheet. Fairchild’s 2014 PN2222A sheet says 1.0 A; the newer, lower figure is the one Bench warns at.',
           'IC',
         ),
-        field('Collector to emitter, base open', PN2222A.maxCollectorVolts, 'V', 1, 'datasheet', '', 'VCEO'),
+        field(
+          'Collector to emitter, base open',
+          PN2222A.maxCollectorVolts,
+          'V',
+          1,
+          'datasheet',
+          'Where it breaks down: past it, current pours from collector to emitter whatever the base says. The datasheet gives 40 V as the least, measured at 10 mA; Bench breaks down there, as sharply as a junction can. The others here are warned, not simulated.',
+          'VCEO',
+        ),
         field('Heat, in air at 25 °C', PN2222A.maxWatts, 'mW', 1e-3, 'datasheet', 'Less when it’s warmer: 5 mW less per °C.', 'PD'),
       ],
     },

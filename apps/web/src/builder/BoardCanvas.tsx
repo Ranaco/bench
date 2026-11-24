@@ -42,6 +42,9 @@ import { pinKey, type BoardSim, type BoardSnapshot, type PartReading } from '../
 import { PartSymbol } from './symbols';
 import { LedLight } from '../kinds/led/symbol';
 
+/** A part held down while pressed (a push button, a motor's shaft), rather than dragged. */
+const holdable = (part: PlacedPart | undefined) => part !== undefined && CATALOG[part.kind].press !== undefined;
+
 /** What the page needs from the canvas: dropping parts carried in from the palette, and the view. */
 export interface CanvasApi {
   /** The board point under a screen point, or undefined when it's outside the canvas. */
@@ -376,12 +379,13 @@ export function BoardCanvas({ ref, ...props }: BoardCanvasProps) {
     window.getSelection()?.removeAllRanges();
 
     // A second finger pinches the view with the first, whatever the first was doing (moving a part, say,
-    // which then stays put). Except on a push button's cap: two fingers can hold down two buttons.
+    // which then stays put). Except on something held down (a push button's cap, a motor's shaft): two fingers can
+    // hold down two.
     if (event.pointerType === 'touch') {
       fingers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
       const other = [...fingers.current.keys()].find((id) => id !== event.pointerId && !holding.current.has(id));
       const cap = element?.closest('[data-actuator]')?.getAttribute('data-actuator');
-      if (other !== undefined && !(cap && parts.get(cap)?.kind === 'button')) {
+      if (other !== undefined && !(cap && holdable(parts.get(cap)))) {
         const at = fingers.current.get(other);
         if (!camera.has(other) && at) {
           setGesture(undefined);
@@ -437,7 +441,7 @@ export function BoardCanvas({ ref, ...props }: BoardCanvasProps) {
       return;
     }
 
-    // A push button's cap: held down for as long as the pointer is.
+    // A push button's cap, or a motor's shaft: held down for as long as the pointer is.
     const actuator = element?.closest('[data-actuator]')?.getAttribute('data-actuator');
     // A knob's dial: dragged to turn it.
     const knob = actuator ? parts.get(actuator) : undefined;
@@ -448,9 +452,13 @@ export function BoardCanvas({ ref, ...props }: BoardCanvasProps) {
       setGesture({ type: 'turn', part: actuator, pointer: event.pointerId, startX: event.clientX, startY: event.clientY, from: turnOf(knob.props) });
       return;
     }
-    if (actuator && !additive && parts.get(actuator)?.kind === 'button') {
+    if (actuator && !additive && holdable(parts.get(actuator))) {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
+      // A motor held still is what you'd watch: its current climbs. A button pressed is for watching something else.
+      if (parts.get(actuator)?.kind === 'motor' && !(includes(selection, 'part', actuator) && size(selection) === 1)) {
+        props.onSelect(only('part', actuator));
+      }
       holding.current.set(event.pointerId, actuator);
       props.onPress(actuator, true);
       return;

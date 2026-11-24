@@ -30,12 +30,17 @@ export const transistorView: KindView = {
       // The gain only means something while there's base current to divide by, and a collector current to divide.
       ...(q.state !== 'off' && q.collectorAmps !== undefined ? [['Collector ÷ base', `× ${(q.collectorAmps / q.baseAmps).toFixed(0)}`] as const] : []),
       ['Across it, collector to emitter', volts(q.collectorVolts)],
+      // A coil's kick is over in microseconds: kept for a second so it can be read.
+      ...(q.highestVolts === undefined ? [] : [['Highest in the last second', volts(q.highestVolts)] as const]),
       ['Base to emitter', volts(q.baseVolts)],
       ['Turning into heat', watts(reading.watts)],
       ['Rated for', LIMITS],
     ];
   },
-  overWarning: () => `Past what its datasheet allows (${LIMITS}). Bench doesn’t model a transistor’s heat, so it only warns.`,
+  overWarning: (_part, reading) =>
+    (reading.transistor?.highestVolts ?? 0) > PN2222A.maxCollectorVolts
+      ? `Its collector was kicked past its ${formatSI(PN2222A.maxCollectorVolts, 'V', { trim: true })} rating, where it breaks down: a coil’s current had nowhere else to go. A diode across the coil gives it a way round. Bench only warns: it doesn’t model the harm.`
+      : `Past what its datasheet allows (${LIMITS}). Bench doesn’t model a transistor’s heat, so it only warns.`,
   sheet: () => TRANSISTOR_SHEET,
   in3d: true,
   Graph: TransistorPane,

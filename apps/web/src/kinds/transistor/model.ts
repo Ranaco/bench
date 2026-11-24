@@ -15,7 +15,15 @@ const OFF_BASE_AMPS = 1e-6;
  */
 const ON_SHARE = 0.9;
 
-export const transistor = defineKind<TransistorModel>({
+/** How far back the highest collector voltage is kept, s: long enough to read a kick that lasted microseconds. */
+const PEAK_SECONDS = 1;
+
+/** The highest collector voltage in each step: what a kick leaves, for a second. */
+interface TransistorMemo {
+  peaks: { at: number; volts: number }[];
+}
+
+export const transistor = defineKind<TransistorModel, TransistorMemo>({
   kind: 'transistor',
   name: 'Transistor',
   blurb: 'An NPN transistor: a small current into its base lets a big one flow from collector to emitter',
@@ -28,7 +36,13 @@ export const transistor = defineKind<TransistorModel>({
   defaults: {},
   modules: ['transistor'],
   create: (label, nodes, _props, code) => new code.transistor(label, nodes.collector, nodes.base, nodes.emitter),
-  read: ({ c, part, written, failed, amps, watts }) => {
+  memo: () => ({ peaks: [] }),
+  track: ({ c, part, memo, failed }) => {
+    const highest = part.takeHighest?.();
+    if (!failed && highest !== undefined && highest > -Infinity) memo.peaks.push({ at: c.time, volts: highest });
+    memo.peaks = memo.peaks.filter((peak) => peak.at > c.time - PEAK_SECONDS);
+  },
+  read: ({ c, part, memo, written, failed, amps, watts }) => {
     // Its leads are given in the lesson's stub, so the nodes inside them exist once its stamp has run at all.
     const live = written && !failed;
     const collectorAmps = live ? amps : 0;
@@ -44,12 +58,16 @@ export const transistor = defineKind<TransistorModel>({
             ? 'on'
             : 'amplifying';
     const { maxCollectorAmps, maxCollectorVolts, maxWatts } = part.spec;
-    const over = (collectorAmps ?? 0) > maxCollectorAmps || collectorVolts > maxCollectorVolts || watts > maxWatts;
+    const highestVolts = part.takeHighest && memo.peaks.length > 0 ? Math.max(...memo.peaks.map((peak) => peak.volts)) : undefined;
+    const over =
+      (collectorAmps ?? 0) > maxCollectorAmps ||
+      Math.max(collectorVolts, highestVolts ?? collectorVolts) > maxCollectorVolts ||
+      watts > maxWatts;
     return {
       volts: collectorVolts,
       over: live && over,
       // Out of the circuit until its stamp is written: nothing to read.
-      transistor: live ? { baseAmps, collectorAmps, collectorVolts, baseVolts, state } : undefined,
+      transistor: live ? { baseAmps, collectorAmps, collectorVolts, baseVolts, state, highestVolts } : undefined,
     };
   },
 });

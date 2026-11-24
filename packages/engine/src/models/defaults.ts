@@ -3,6 +3,7 @@
  * engine's tests check the circuit and the board against.
  */
 import { Battery } from '../parts/battery';
+import { Diode } from '../parts/diode';
 import { Electrolytic } from '../parts/electrolytic';
 import { Esp32 } from '../parts/esp32';
 import { Resistor } from '../parts/resistor';
@@ -11,6 +12,7 @@ import { Capacitor } from './capacitor/default';
 import type { Code } from './contracts';
 import { Gpio } from './gpio/default';
 import { Led } from './led/default';
+import { Motor } from './motor/default';
 import { Potentiometer } from './potentiometer/default';
 import { Switch } from './switch/default';
 import { Transistor } from './transistor/default';
@@ -27,4 +29,6 @@ export const DEFAULTS: Code = {
   transistor: Transistor,
   gpio: Gpio,
   esp32: Esp32,
+  diode: Diode,
+  motor: Motor,
 };

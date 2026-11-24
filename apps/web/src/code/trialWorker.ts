@@ -31,6 +31,8 @@ const KIND_OF: Readonly<Record<ModuleId, PartKind>> = {
   transistor: 'transistor',
   gpio: 'esp32',
   esp32: 'esp32',
+  diode: 'diode',
+  motor: 'motor',
 };
 
 function trial({ module, source }: TrialRequest): void {

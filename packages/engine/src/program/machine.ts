@@ -185,14 +185,21 @@ export class Machine {
   private setPins(): void {
     const { modes, levels } = this.queued;
     this.queued = { modes: [], levels: [] };
+    let changed = false;
     for (const [pin, mode] of modes) {
       const gpio = this.chip.pins.get(pin);
-      if (gpio) gpio.mode = mode;
+      if (!gpio) continue;
+      if (gpio.mode !== mode) changed = true;
+      gpio.mode = mode;
     }
     for (const [pin, high] of levels) {
       const gpio = this.chip.pins.get(pin);
-      if (gpio) gpio.high = high;
+      if (!gpio) continue;
+      if (gpio.high !== high) changed = true;
+      gpio.high = high;
     }
+    // A pin switching is sudden: anything fast on the board (a coil) is followed through it in small steps.
+    if (changed) this.circuit.changed();
   }
 
   private apply(millis: number, writes: Writes): void {

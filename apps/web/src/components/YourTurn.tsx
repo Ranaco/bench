@@ -27,6 +27,7 @@ const MODELS: Readonly<Record<string, readonly [withArticle: string, bare: strin
   capacitor: ['a capacitor', 'capacitor'],
   transistor: ['a transistor', 'transistor'],
   gpio: ['a microcontroller’s pin', 'pin'],
+  motor: ['a motor', 'motor'],
 };
 
 

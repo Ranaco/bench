@@ -11,6 +11,8 @@ import type { LedSpec } from './led/default';
 import type { SwitchSpec } from './switch/default';
 import type { PotSpec } from './potentiometer/default';
 import type { Inside, TransistorSpec } from './transistor/default';
+import type { MotorSpec } from './motor/default';
+import type { DiodeSpec } from '../parts/diode';
 import type { GpioMode, GpioSpec, Level } from './gpio/default';
 import type { Node, Part } from '../types';
 
@@ -81,6 +83,30 @@ export interface TransistorModel extends Part {
   readonly spec: TransistorSpec;
   /** The nodes just inside its base and collector leads: there once its stamp has run. */
   readonly inside: Inside;
+  /** Bench's own: the highest collector-to-emitter volts since last asked, and starts again. */
+  takeHighest?(): number;
+}
+
+export interface MotorModel extends Part {
+  readonly plus: Node;
+  readonly minus: Node;
+  readonly spec: MotorSpec;
+  /** The winding's current at the end of the last step, A. */
+  readonly amps: number;
+  /** How fast the shaft turns, radians per second. */
+  readonly speed: number;
+  /** How far the shaft has turned, radians. */
+  readonly angle: number;
+  /** The volts it makes by turning. */
+  readonly backEmf: number;
+  /** True while something holds the shaft still. */
+  held: boolean;
+}
+
+export interface DiodeModel extends Part {
+  readonly anode: Node;
+  readonly cathode: Node;
+  readonly spec: DiodeSpec;
 }
 
 export interface GpioModel extends Part {
@@ -127,6 +153,8 @@ export interface ModuleClasses {
     capacitor?: ModuleClasses['capacitor'],
   ) => ElectrolyticModel;
   transistor: new (name: string, collector: Node, base: Node, emitter: Node, spec?: TransistorSpec) => TransistorModel;
+  diode: new (name: string, anode: Node, cathode: Node, spec?: DiodeSpec) => DiodeModel;
+  motor: new (name: string, plus: Node, minus: Node, spec?: MotorSpec) => MotorModel;
   gpio: new (name: string, pin: Node, vdd: Node, gnd: Node, spec?: GpioSpec) => GpioModel;
   esp32: new (
     name: string,
@@ -159,6 +187,8 @@ export const MODULES: readonly ModuleId[] = [
   'transistor',
   'gpio',
   'esp32',
+  'diode',
+  'motor',
 ];
 
 /** Cell specs, for code that builds a battery from one. */

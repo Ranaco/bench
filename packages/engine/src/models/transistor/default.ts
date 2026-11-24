@@ -18,8 +18,10 @@ export interface TransistorSpec {
   readonly collectorOhms: number;
   /** Most collector current it's rated for, A ("IC"). */
   readonly maxCollectorAmps: number;
-  /** Most volts collector to emitter, with the base open ("VCEO"). */
+  /** Most volts collector to emitter, with the base open ("VCEO"): where it breaks down. */
   readonly maxCollectorVolts: number;
+  /** The collector current that breakdown voltage is measured at, A. */
+  readonly breakdownAmps: number;
   /** Most power it can turn into heat in air at 25 °C ("PD"), W. */
   readonly maxWatts: number;
 }
@@ -30,7 +32,8 @@ export interface TransistorSpec {
  * printed on Fairchild's PN2222A datasheet (Rev. A1, August 2004); the
  * limits are from onsemi's KSP2222A datasheet (Rev. 2, October 2023), which
  * rates the collector for 600 mA (Fairchild's 2014 PN2222A sheet says 1.0 A;
- * the newer, lower figure wins).
+ * the newer, lower figure wins), and gives its collector-emitter breakdown as
+ * 40 V at the least, measured at 10 mA ("BVCEO, IC = 10 mA, IB = 0").
  */
 export const PN2222A: TransistorSpec = {
   saturationAmps: 14.34e-15,
@@ -40,6 +43,7 @@ export const PN2222A: TransistorSpec = {
   collectorOhms: 1,
   maxCollectorAmps: 0.6,
   maxCollectorVolts: 40,
+  breakdownAmps: 0.01,
   maxWatts: 0.625,
 };
 
@@ -121,6 +125,10 @@ export class Transistor implements Part {
   readonly transfer: Curve;
   /** The nodes just inside the base and collector leads, once leads() has run. */
   inside: Inside = { base: GROUND, collector: GROUND };
+  /** Breakdown: a junction's curve, moved up to turn on at `maxCollectorVolts`. */
+  private readonly avalanche: Curve;
+  /** The highest collector-to-emitter volts since takeHighest() last asked. */
+  private highest = -Infinity;
 
   constructor(
     readonly name: string,
@@ -132,6 +140,14 @@ export class Transistor implements Part {
     this.baseEmitter = junctionCurve(spec.saturationAmps, 1 / spec.forwardGain);
     this.baseCollector = junctionCurve(spec.saturationAmps, 1 / spec.reverseGain);
     this.transfer = junctionCurve(spec.saturationAmps);
+    // A junction's curve moved up the volts, so that with the collector lead's drop it carries breakdownAmps at
+    // exactly maxCollectorVolts, as the datasheet measures it, at the legs.
+    const knee =
+      spec.maxCollectorVolts -
+      THERMAL_VOLTAGE * Math.log(spec.breakdownAmps / spec.saturationAmps) -
+      spec.breakdownAmps * spec.collectorOhms;
+    const amps = (volts: number) => spec.saturationAmps * Math.exp((volts - knee) / THERMAL_VOLTAGE);
+    this.avalanche = { knee, current: amps, slope: (volts) => amps(volts) / THERMAL_VOLTAGE };
   }
 
   /** Written for you. The base and collector leads' resistances; returns the nodes inside them. */
@@ -147,11 +163,34 @@ export class Transistor implements Part {
     return r.across(this.base, this.inside.base) / this.spec.baseOhms;
   }
 
-  /** Written for you. The leads, then your two jobs. */
+  /** Written for you. The leads, then your two jobs, then breakdown. */
   stamp(s: Stamp): void {
     const inside = this.leads(s);
     this.diodes(s, inside);
     this.action(s, inside);
+    this.breakdown(s, inside);
+  }
+
+  /**
+   * Written for you. Push the collector past its rating and it breaks down: current pours through to the emitter
+   * whatever the base says. The datasheet gives only the least voltage that happens at, and the current it's measured
+   * at; here it starts there, as sharply as a junction can turn on. It only matters when something pushes hard, like a
+   * coil switched off with nowhere else for its current to go.
+   */
+  breakdown(s: Stamp, { collector }: Inside): void {
+    s.junction(collector, this.emitter, this.avalanche);
+  }
+
+  /** Written for you. Keeps the highest collector voltage: a coil's kick comes and goes far faster than a tick. */
+  settle(r: Readings): void {
+    this.highest = Math.max(this.highest, r.across(this.collector, this.emitter));
+  }
+
+  /** The highest collector-to-emitter volts since this was last asked (-Infinity if no time has passed), and starts again. */
+  takeHighest(): number {
+    const highest = this.highest;
+    this.highest = -Infinity;
+    return highest;
   }
 
   diodes(s: Stamp, { base, collector }: Inside): void {
