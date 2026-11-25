@@ -16,6 +16,7 @@ import switchText from '../../../../packages/engine/src/models/switch/default.ts
 import transistorText from '../../../../packages/engine/src/models/transistor/default.ts?raw';
 import motorText from '../../../../packages/engine/src/models/motor/default.ts?raw';
 import diodeText from '../../../../packages/engine/src/parts/diode.ts?raw';
+import driverText from '../../../../packages/engine/src/models/driver/default.ts?raw';
 import ledStub from '../../../../packages/engine/src/lesson-1-light-an-led/led.ts?raw';
 import switchStub from '../../../../packages/engine/src/lesson-2-switches/switch.ts?raw';
 import potentiometerStub from '../../../../packages/engine/src/lesson-3-knob/potentiometer.ts?raw';
@@ -23,6 +24,7 @@ import capacitorStub from '../../../../packages/engine/src/lesson-4-capacitors/c
 import transistorStub from '../../../../packages/engine/src/lesson-5-transistors/transistor.ts?raw';
 import gpioStub from '../../../../packages/engine/src/lesson-6-microcontroller/gpio.ts?raw';
 import motorStub from '../../../../packages/engine/src/lesson-7-motors/motor.ts?raw';
+import driverStub from '../../../../packages/engine/src/lesson-8-direction/driver.ts?raw';
 import programStub from '../../../../packages/engine/src/lesson-6-microcontroller/program.ts?raw';
 
 /**
@@ -43,6 +45,7 @@ export const DEFAULT_SOURCES: Readonly<Record<ModuleId, string>> = {
   esp32: esp32Text,
   diode: diodeText,
   motor: motorText,
+  driver: driverText,
 };
 
 /** Where each of Bench's defaults is written, in Bench's own code: change one there and it changes everywhere. */
@@ -60,6 +63,7 @@ export const DEFAULT_FILES: Readonly<Record<ModuleId, string>> = {
   esp32: 'packages/engine/src/parts/esp32.ts',
   diode: 'packages/engine/src/parts/diode.ts',
   motor: 'packages/engine/src/models/motor/default.ts',
+  driver: 'packages/engine/src/models/driver/default.ts',
 };
 
 /** The parts you write in lessons, and the lesson that introduces each. */
@@ -71,6 +75,7 @@ export const LESSON_MODULES = {
   transistor: 'transistors',
   gpio: 'microcontroller',
   motor: 'motors',
+  driver: 'direction',
 } as const satisfies Partial<Record<ModuleId, string>>;
 
 export type LessonModule = keyof typeof LESSON_MODULES;
@@ -86,6 +91,7 @@ export const STUB_SOURCES: Readonly<Record<LessonModule, string>> = {
   transistor: transistorStub,
   gpio: gpioStub,
   motor: motorStub,
+  driver: driverStub,
 };
 
 /** What Lesson 6's ESP32 starts with. */

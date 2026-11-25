@@ -13,6 +13,7 @@ import type { Code } from './contracts';
 import { Gpio } from './gpio/default';
 import { Led } from './led/default';
 import { Motor } from './motor/default';
+import { MotorDriver } from './driver/default';
 import { Potentiometer } from './potentiometer/default';
 import { Switch } from './switch/default';
 import { Transistor } from './transistor/default';
@@ -31,4 +32,5 @@ export const DEFAULTS: Code = {
   esp32: Esp32,
   diode: Diode,
   motor: Motor,
+  driver: MotorDriver,
 };

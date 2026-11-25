@@ -2,7 +2,7 @@
  * What the board reads, as plain data: every part's current, voltage and state, every wire's current, and the
  * program's. The Inspector, the Graph, the lessons and the 3D view all draw from this.
  */
-import type { FloatingRead, GpioMode, Level, Unwritten } from '@bench/engine';
+import type { ChannelInputs, FloatingRead, GpioMode, Level, Outputs, Unwritten } from '@bench/engine';
 import type { PinRef } from '../builder/board';
 
 export interface PartReading {
@@ -34,6 +34,8 @@ export interface PartReading {
   readonly transistor: TransistorReading | undefined;
   /** For a motor: how fast it turns, and what it pushes back with. */
   readonly motor: MotorReading | undefined;
+  /** For a motor driver: how it's powered, and what each channel does. */
+  readonly driver: DriverReading | undefined;
   /** For an ESP32 board: each GPIO pin. */
   readonly chip: ChipReading | undefined;
   /** For an LED: how many times it's come on since it was placed (or the board was loaded). */
@@ -164,6 +166,37 @@ export interface TransistorReading {
    * far less than a tick. Undefined for code that doesn't keep it.
    */
   readonly highestVolts: number | undefined;
+}
+
+/** What a motor driver's channel does to a motor across it, from its two outputs. */
+export type DriveMode = 'forward' | 'reverse' | 'brake' | 'coast';
+
+/** One channel of a motor driver. */
+export interface ChannelReading {
+  /** OUT1's and OUT2's: switched to the motor supply, to ground, or to neither. */
+  readonly outputs: Outputs;
+  /** What that does to a motor across them. Undefined for a mix the datasheet's table never gives (one output off). */
+  readonly mode: DriveMode | undefined;
+  /** Out of OUT1, through whatever's across the outputs, and back in at OUT2, A. */
+  readonly amps: number;
+  /** Its inputs, as the chip last read them. */
+  readonly inputs: ChannelInputs;
+}
+
+/** A motor driver: how it's powered, and its two channels. */
+export interface DriverReading {
+  /** Channel A, then B. */
+  readonly channels: readonly [ChannelReading, ChannelReading];
+  /** True while VCC is high enough for its logic to run. */
+  readonly powered: boolean;
+  /** True while STBY reads HIGH. */
+  readonly awake: boolean;
+  /** True while an input sits between LOW and HIGH. */
+  readonly uncertain: boolean;
+  /** VM, the motor supply, from its GND, V. */
+  readonly motorVolts: number;
+  /** VCC, the logic supply, from its GND, V. */
+  readonly logicVolts: number;
 }
 
 export interface MotorReading {

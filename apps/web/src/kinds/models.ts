@@ -4,6 +4,7 @@ import { battery } from './battery/model';
 import { button } from './button/model';
 import { capacitor } from './capacitor/model';
 import { diode } from './diode/model';
+import { driver } from './driver/model';
 import { esp32 } from './esp32/model';
 import { ground } from './ground/model';
 import { junction } from './junction/model';
@@ -26,6 +27,7 @@ export const KINDS: Readonly<Record<PartKind, KindModel>> = {
   transistor,
   diode,
   motor,
+  driver,
   esp32,
   ground,
   junction,

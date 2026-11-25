@@ -18,11 +18,22 @@ export { Esp32 } from './parts/esp32';
 export { Diode, VISHAY_1N4007, type DiodeSpec } from './parts/diode';
 export { FAULHABER_1516_009SR, Motor, type MotorSpec } from './models/motor/default';
 export {
+  MotorDriver,
+  TB6612FNG,
+  type ChannelInputs,
+  type ChannelPins,
+  type DriverPins,
+  type DriverSpec,
+  type Output,
+  type Outputs,
+} from './models/driver/default';
+export {
   MODULES,
   type BatteryModel,
   type CapacitorModel,
   type Code,
   type DiodeModel,
+  type DriverModel,
   type MotorModel,
   type ElectrolyticModel,
   type Esp32Model,

@@ -72,7 +72,17 @@ export class Machine {
     readonly program: ProgramTransport,
     /** Which converter each pin that analogRead() can read is on. */
     readonly adc: Readonly<Partial<Record<number, AdcUnit>>> = {},
-  ) {}
+  ) {
+    // A program starts as one uploaded to a real board does, from a reset: every pin an input again, whatever a
+    // program before it left driving.
+    let changed = false;
+    for (const gpio of chip.pins.values()) {
+      if (gpio.mode !== 'input' || gpio.high) changed = true;
+      gpio.mode = 'input';
+      gpio.high = false;
+    }
+    if (changed) circuit.changed();
+  }
 
   /**
    * The jobs on your pin still to write: until all three are, the program doesn't run. The circuit only ever calls

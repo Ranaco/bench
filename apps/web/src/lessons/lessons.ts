@@ -1,4 +1,4 @@
-import { ENERGIZER_522, ESP32_GPIO, FAULHABER_1516_009SR, PN2222A, RED_LED, VISHAY_1N4007 } from '@bench/engine';
+import { ENERGIZER_522, ESP32_GPIO, FAULHABER_1516_009SR, PN2222A, RED_LED, TB6612FNG, VISHAY_1N4007 } from '@bench/engine';
 import { netsOf, type Board, type PartKind, type PinRef, type PlacedPart } from '../builder/board';
 import { CATALOG } from '../builder/catalog';
 import { supplyFor } from '../kinds/battery/model';
@@ -724,15 +724,110 @@ export const MOTORS: Lesson = {
     },
   ],
   outro:
-    'A motor is a resistor, a coil and a generator in one: it draws most starting and held still, least running free, and its coil kicks when switched off, so a diode goes across it. With nothing to turn, it coasts through PWM’s off-time, so half on is nearly full speed: it only slows once the on-time can barely keep up with its friction. Next, direction and power: running it backwards, and keeping the ESP32 alive when a motor starts. Build mode has the motor and diode too.',
+    'A motor is a resistor, a coil and a generator in one: it draws most starting and held still, least running free, and its coil kicks when switched off, so a diode goes across it. With nothing to turn, it coasts through PWM’s off-time, so half on is nearly full speed: it only slows once the on-time can barely keep up with its friction. Next, direction: a motor driver that runs it both ways, and stops it two ways. Build mode has the motor and diode too.',
 };
 
-export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS, TRANSISTORS, MICROCONTROLLER, MOTORS];
+/** Each motor driver that's in the circuit, with what it reads. */
+function drivers({ board, snapshot }: LessonState) {
+  return ofKind(board, 'driver').flatMap((part) => {
+    const reading = snapshot.parts[part.id];
+    return reading?.written && reading.driver ? [{ part, ...reading.driver }] : [];
+  });
+}
+
+/** Each motor wired across a driver's channel (its two pins on that channel's two outputs), with the channel. */
+function driven(state: LessonState) {
+  const net = netsOf(state.board);
+  return drivers(state).flatMap((driver) =>
+    (['a', 'b'] as const).flatMap((side, index) => {
+      const outputs = [net({ part: driver.part.id, pin: `${side}o1` }), net({ part: driver.part.id, pin: `${side}o2` })];
+      return motors(state)
+        .filter((m) => {
+          const ends = [net({ part: m.part.id, pin: 'plus' }), net({ part: m.part.id, pin: 'minus' })];
+          return ends[0] !== ends[1] && ends.every((end) => outputs.includes(end));
+        })
+        .map((motor) => ({ driver, channel: driver.channels[index === 0 ? 0 : 1], motor }));
+    }),
+  );
+}
+
+/** Still turning, enough to watch it stop: a hundred rpm. */
+const TURNING_RPM = 100;
+
+export const DIRECTION: Lesson = {
+  id: 'direction',
+  number: 8,
+  title: 'Direction',
+  goal: 'Run a motor both ways through a driver chip, stop it two ways, and see why braking makes PWM work at last.',
+  parts: ['battery', 'resistor', 'led', 'button', 'transistor', 'diode', 'motor', 'driver', 'esp32', 'ground'],
+  steps: [
+    {
+      id: 'wire',
+      title: 'Wire up the driver',
+      detail: `Put a Motor driver on the board. Its left side talks to the ESP32: VCC to 3V3, GND to GND, and STBY to 3V3 for now (HIGH: awake). Its right side runs the motor: VM to the 9 V battery’s +, the motor across AO1 and AO2, and its other GND to the battery’s −. Select it: its logic is yours to write, and the Your turn card has the jobs. Job 1 is enough to begin.`,
+      passes: (state) =>
+        driven(state).some(({ driver }) => driver.powered && driver.awake && driver.motorVolts >= TB6612FNG.minMotorVolts),
+    },
+    {
+      id: 'forward',
+      title: 'Forward',
+      detail:
+        'Wire three GPIOs to AIN1, AIN2 and PWMA (GPIO21, 19 and 18 will do). In your program: AIN1 HIGH, AIN2 LOW, PWMA HIGH. The chip switches AO1 to the battery and AO2 to ground, and the motor gets the whole 9 V, less half an ohm of switches.',
+      passes: (state) =>
+        driven(state).some(({ channel, motor }) => channel.mode === 'forward' && Math.abs(motor.rpm) >= UP_TO_SPEED && pushesBack(motor)),
+    },
+    {
+      id: 'backwards',
+      title: 'Backwards',
+      detail:
+        'Swap them: AIN1 LOW, AIN2 HIGH. Guess first: what does the Speed row show? With a transistor you could only switch a motor on and off; four switches put the battery across it either way round. That’s an H-bridge.',
+      passes: (state) =>
+        driven(state).some(({ channel, motor }) => channel.mode === 'reverse' && Math.abs(motor.rpm) >= UP_TO_SPEED && pushesBack(motor)),
+    },
+    {
+      id: 'coast',
+      title: 'Let it coast',
+      detail:
+        'Now stop it: AIN1 and AIN2 both LOW. Every switch lets go, so nothing flows through the motor, and only its friction slows it. Watch the Speed row: how long does it take to stop?',
+      passes: (state) =>
+        driven(state).some(
+          ({ channel, motor }) => channel.mode === 'coast' && Math.abs(motor.rpm) >= TURNING_RPM && Math.abs(motor.amps) < 1e-3,
+        ),
+    },
+    {
+      id: 'brake',
+      title: 'Brake it',
+      detail:
+        'Run it again, then stop it with AIN1 and AIN2 both HIGH. Guess first: faster or slower than coasting? Both its ends are joined to ground now, and a spinning motor is a generator: its own back-EMF pushes current backwards through its winding (watch the current’s sign), and that current’s torque fights the spin.',
+      passes: (state) =>
+        driven(state).some(
+          ({ channel, motor }) =>
+            channel.mode === 'brake' && Math.abs(motor.rpm) >= TURNING_RPM && motor.amps * motor.rpm < 0 && Math.abs(motor.amps) > 0.01,
+        ),
+    },
+    {
+      id: 'half',
+      title: 'Half speed, at last',
+      detail:
+        'AIN1 HIGH, AIN2 LOW, and your dimmer on PWMA: 5 ms on, 5 ms off. In Lesson 7, half on was nearly full speed, about 12 000 rpm. Guess first: what now? (PWMA LOW brakes, like both inputs HIGH.)',
+      passes: (state) =>
+        state.snapshot.readout !== undefined &&
+        driven(state).some(({ motor }) => {
+          const rpm = Math.abs(motor.averageRpm ?? 0);
+          return !motor.held && motor.steady && rpm >= 0.35 * MOTOR.noLoadRpm && rpm <= 0.65 * MOTOR.noLoadRpm;
+        }),
+    },
+  ],
+  outro:
+    'An H-bridge puts the battery across a motor either way round, and stops it two ways: let go, and it coasts on its friction; join its ends, and it brakes on its own back-EMF. Braking through every off-time is why PWM through a driver finally gives half speed at half on. Next, power: running the ESP32 from the battery through its regulator, and what happens when the battery can’t keep up. Build mode has the driver too.',
+};
+
+export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS, TRANSISTORS, MICROCONTROLLER, MOTORS, DIRECTION];
 
 export const lessonById = (id: string) => LESSONS.find((lesson) => lesson.id === id);
 
 /** What's coming, from the roadmap: shown locked, so the path ahead is visible. */
 export const COMING: readonly { readonly number: number; readonly title: string; readonly blurb: string }[] = [
-  { number: 8, title: 'Direction and power', blurb: 'A motor driver to run it both ways, and a brownout, where your capacitor comes back.' },
-  { number: 9, title: 'The car', blurb: 'A 2D robot body, steered by your phone.' },
+  { number: 9, title: 'Power', blurb: 'The ESP32 from a battery, through its regulator, and what happens when the battery can’t keep up.' },
+  { number: 10, title: 'The car', blurb: 'A 2D robot body, steered by your phone.' },
 ];

@@ -17,7 +17,8 @@
  * Pins are numbered as on the board: GPIO4 is pin 4. On a real board delay() just stops the program; here it's
  * `await delay(500)`, and a function that uses it is `async`: `export async function loop() { … }`.
  *
- * Save, and the page reloads with your program running on the board.
+ * Save, and the board starts your program from the top, as an upload does on a real one: from a reset, with every
+ * pin an input again until your setup() says otherwise.
  */
 
 export function setup(): void {

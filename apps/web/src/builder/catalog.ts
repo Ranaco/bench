@@ -10,7 +10,7 @@ export const GRID = 20;
 /** Every kind of part, by its kind: its pins, size and settings, and how it's built (see kinds/). */
 export const CATALOG = KINDS;
 
-export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'capacitor', 'transistor', 'diode', 'motor', 'esp32', 'ground'];
+export const PALETTE: readonly PartKind[] = ['battery', 'resistor', 'led', 'switch', 'button', 'knob', 'capacitor', 'transistor', 'diode', 'motor', 'driver', 'esp32', 'ground'];
 
 /** Rotates a point about the origin by a multiple of 90°. */
 export function rotate(p: Point, rotation: Rotation): Point {

@@ -28,12 +28,14 @@ const MODELS: Readonly<Record<string, readonly [withArticle: string, bare: strin
   transistor: ['a transistor', 'transistor'],
   gpio: ['a microcontroller’s pin', 'pin'],
   motor: ['a motor', 'motor'],
+  driver: ['a motor driver', 'motor driver'],
 };
 
 
 /** Where a part's stamp() is written for you and calls jobs of yours, what to name instead of stamp(). */
 const STAMP_JOBS: Readonly<Record<string, string>> = {
   transistor: 'diodes() and action(), the two jobs its stamp() calls, so the solver knows how it behaves',
+  'motor driver': 'drive(), which its stamp() asks which way each output goes',
 };
 
 /** What waits on the jobs left, for a part something else waits on: a program can't run on a half-written pin. */

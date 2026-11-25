@@ -12,9 +12,10 @@ import type { SwitchSpec } from './switch/default';
 import type { PotSpec } from './potentiometer/default';
 import type { Inside, TransistorSpec } from './transistor/default';
 import type { MotorSpec } from './motor/default';
+import type { ChannelInputs, DriverPins, DriverSpec, Outputs } from './driver/default';
 import type { DiodeSpec } from '../parts/diode';
 import type { GpioMode, GpioSpec, Level } from './gpio/default';
-import type { Node, Part } from '../types';
+import type { Node, Part, Readings } from '../types';
 
 export interface BatteryModel extends Part {
   readonly plus: Node;
@@ -103,6 +104,23 @@ export interface MotorModel extends Part {
   held: boolean;
 }
 
+export interface DriverModel extends Part {
+  readonly pins: DriverPins;
+  readonly spec: DriverSpec;
+  /** STBY as last read: HIGH to run. */
+  readonly stby: boolean;
+  /** Each channel's inputs as last read: A, then B. */
+  readonly inputs: readonly [ChannelInputs, ChannelInputs];
+  /** Each channel's outputs: A, then B. */
+  readonly outputs: readonly [Outputs, Outputs];
+  /** True while its logic supply is high enough to run. */
+  readonly powered: boolean;
+  /** True while an input sits between LOW and HIGH. */
+  readonly uncertain: boolean;
+  /** The current out of a channel's OUT1, through its load, and back in at OUT2. */
+  loadAmps(r: Readings, channel: 0 | 1): number;
+}
+
 export interface DiodeModel extends Part {
   readonly anode: Node;
   readonly cathode: Node;
@@ -155,6 +173,7 @@ export interface ModuleClasses {
   transistor: new (name: string, collector: Node, base: Node, emitter: Node, spec?: TransistorSpec) => TransistorModel;
   diode: new (name: string, anode: Node, cathode: Node, spec?: DiodeSpec) => DiodeModel;
   motor: new (name: string, plus: Node, minus: Node, spec?: MotorSpec) => MotorModel;
+  driver: new (name: string, pins: DriverPins, spec?: DriverSpec, grounds?: readonly Node[]) => DriverModel;
   gpio: new (name: string, pin: Node, vdd: Node, gnd: Node, spec?: GpioSpec) => GpioModel;
   esp32: new (
     name: string,
@@ -189,6 +208,7 @@ export const MODULES: readonly ModuleId[] = [
   'esp32',
   'diode',
   'motor',
+  'driver',
 ];
 
 /** Cell specs, for code that builds a battery from one. */

@@ -43,6 +43,7 @@ export const CLASS_NAMES: Readonly<Record<ModuleId, string>> = {
   esp32: 'Esp32',
   diode: 'Diode',
   motor: 'Motor',
+  driver: 'MotorDriver',
 };
 
 /** The modules a module's code builds parts of: built first, so it can use them. */
@@ -61,6 +62,7 @@ const LEGACY_MODULES: Readonly<Partial<Record<string, ModuleId>>> = {
   '../lesson-5-transistors/transistor': 'transistor',
   '../lesson-6-microcontroller/gpio': 'gpio',
   '../lesson-7-motors/motor': 'motor',
+  '../lesson-8-direction/driver': 'driver',
   '../parts/battery': 'battery',
   '../parts/diode': 'diode',
   '../parts/resistor': 'resistor',

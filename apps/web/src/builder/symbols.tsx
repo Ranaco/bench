@@ -10,11 +10,14 @@ export function PartSymbol({ kind }: { readonly kind: PartKind }) {
   return <Symbol />;
 }
 
+/** The view each palette tile shows: the chips are bigger than the rest. */
+const TILE_VIEWS: Partial<Record<PartKind, string>> = { esp32: '-110 -95 220 190', driver: '-110 -100 220 200' };
+
 /** A part's symbol, shrunk to fit a palette tile, with anything that moves on it at rest. */
 export function PaletteIcon({ kind }: { readonly kind: PartKind }) {
   const { Icon } = VIEWS[kind];
   return (
-    <svg className="palette-icon" viewBox={kind === 'esp32' ? '-110 -95 220 190' : '-70 -70 140 140'} aria-hidden="true">
+    <svg className="palette-icon" viewBox={TILE_VIEWS[kind] ?? '-70 -70 140 140'} aria-hidden="true">
       <PartSymbol kind={kind} />
       {Icon && <Icon />}
     </svg>

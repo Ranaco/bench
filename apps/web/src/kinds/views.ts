@@ -4,6 +4,7 @@ import { batteryView } from './battery/view';
 import { buttonView } from './button/view';
 import { capacitorView } from './capacitor/view';
 import { diodeView } from './diode/view';
+import { driverView } from './driver/view';
 import { esp32View } from './esp32/view';
 import { knobView } from './knob/view';
 import { ledView } from './led/view';
@@ -28,6 +29,7 @@ export const VIEWS: Readonly<Record<PartKind, KindView>> = {
   transistor: transistorView,
   diode: diodeView,
   motor: motorView,
+  driver: driverView,
   esp32: esp32View,
   ground: { ...WIRING, Symbol: GroundSymbol, rows: (_part, reading) => [['Current into ground', amps(reading.amps)]] },
   junction: { ...WIRING, Symbol: JunctionSymbol },

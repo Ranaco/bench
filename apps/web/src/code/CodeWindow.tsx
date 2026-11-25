@@ -35,6 +35,7 @@ const TAB_NAMES: Readonly<Record<ModuleId, string>> = {
   esp32: 'Board',
   diode: 'Diode',
   motor: 'Motor',
+  driver: 'Driver',
 };
 
 /** What's open in the editor: its text, its file, and whether it can be changed. */

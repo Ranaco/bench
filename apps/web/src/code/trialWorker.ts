@@ -33,6 +33,7 @@ const KIND_OF: Readonly<Record<ModuleId, PartKind>> = {
   esp32: 'esp32',
   diode: 'diode',
   motor: 'motor',
+  driver: 'driver',
 };
 
 function trial({ module, source }: TrialRequest): void {
