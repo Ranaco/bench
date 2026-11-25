@@ -37,8 +37,9 @@ export function readProgress(lesson: Lesson | undefined): ReadonlySet<string> {
 }
 
 /**
- * Whether every step of a lesson is done, as saved. A finished lesson's part runs Bench's default code everywhere but
- * in that lesson; going back to a step makes it unfinished again, and your code is back.
+ * Whether every step of a lesson is done, as saved. In the other lessons, a finished lesson's part runs Bench's default
+ * code; going back to a step makes it unfinished again, and your code is back there. A project in Build always runs
+ * Bench's default, finished or not, and the lesson itself always runs yours.
  */
 export function isFinished(lesson: Lesson): boolean {
   return readProgress(lesson).size === lesson.steps.length;

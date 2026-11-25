@@ -70,8 +70,9 @@ interface Read {
 }
 
 async function readAll(store: FileStore, scope: CodeScope): Promise<Read> {
+  // A project never runs lesson code (see resolve.ts): only a lesson reads it.
   const lessons = new Map<LessonModule, string>();
-  for (const m of Object.keys(LESSON_MODULES) as LessonModule[]) {
+  for (const m of scope.project ? [] : (Object.keys(LESSON_MODULES) as LessonModule[])) {
     const text = await store.read(lessonFile(m));
     if (text !== undefined) lessons.set(m, text);
   }
@@ -126,7 +127,7 @@ export function useBoardCode(store: FileStore | undefined, scope: CodeScope | un
   useEffect(() => {
     if (!store || !scope) return;
     return store.onChange((path) => {
-      if (path.startsWith('lessons/') || (scope.project && path.startsWith(`projects/${scope.project.slug}/`))) reload();
+      if (scope.project ? path.startsWith(`projects/${scope.project.slug}/`) : path.startsWith('lessons/')) reload();
     });
   }, [store, scope, reload]);
 

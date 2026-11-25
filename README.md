@@ -195,8 +195,11 @@ lesson's file, Bench's default in Bench's code.
 Which code a part runs, the first of these that's there:
 
 1. **the project's own source**, from *Edit source*;
-2. the base: **your lesson code** while the lesson that introduces the part isn't finished (and always in that
-   lesson), then **Bench's default** once you've finished it.
+2. the base:
+   - in a project (**Build**): **Bench's default**, always. Every part there is written, whether or not you've done
+     the lesson that teaches it.
+   - in a lesson: **your lesson code** while the lesson that introduces the part isn't finished (and always in that
+     lesson), then **Bench's default** once you've finished it.
 
 Before new code runs on the board it gets a trial run in a worker: built into a part in a small circuit and run for
 a few milliseconds. Code that doesn't finish in 2 s (a loop that never ends) is refused, with a card saying so,
@@ -228,7 +231,7 @@ packages/engine/src/
                                   electrolytic (your capacitor, plus the leak its datasheet allows), diode
 ```
 
-Bench's own code for each of them, the default a part runs once its lesson is finished, is in
+Bench's own code for each of them, the default a part runs in Build and once its lesson is finished, is in
 `packages/engine/src/models/<part>/default.ts`. The tests mirror the lessons, in `packages/engine/test`, and run
 twice: against Bench's default, and against your file in your home folder, loaded exactly as the board loads it.
 

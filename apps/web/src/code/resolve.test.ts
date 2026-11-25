@@ -1,7 +1,10 @@
 /** Which code the parts run: a project's own source, then the base, for a project and for a lesson. */
 import { DEFAULTS } from '@bench/engine';
 import { describe, expect, it } from 'vitest';
-import { build, choose, NO_FILES, type CodeFiles, type CodeScope } from './resolve';
+import { ledLoop, partOf, run } from '../builder/fixtures';
+import { BoardSim } from '../sim';
+import { build, chooseAll, choose, NO_FILES, type CodeFiles, type CodeScope } from './resolve';
+import { LESSON_MODULES } from './sources';
 
 const LED = 'export class Led { readonly mine = true; }';
 const files = (over: Partial<CodeFiles>): CodeFiles => ({ ...NO_FILES, ...over });
@@ -10,16 +13,31 @@ const finished = () => true;
 const unfinished = () => false;
 
 describe('Which code a part runs', () => {
-  it('Bench’s default is the base once the part’s lesson is finished', () => {
-    expect(choose('led', project, files({ lessons: new Map([['led', LED]]) }), finished)).toEqual({ origin: 'default', source: undefined });
+  it('in a project, every part runs Bench’s default: written, whether or not its lesson is done', () => {
+    const yours = files({ lessons: new Map([['led', LED]]) });
+    expect(choose('led', project, yours, finished)).toEqual({ origin: 'default', source: undefined });
+    expect(choose('led', project, yours, unfinished)).toEqual({ origin: 'default', source: undefined });
+    // A first visit: no lesson started, nothing of yours written.
+    for (const module of Object.keys(LESSON_MODULES) as (keyof typeof LESSON_MODULES)[]) {
+      expect(choose(module, project, NO_FILES, unfinished), module).toEqual({ origin: 'default', source: undefined });
+    }
   });
 
-  it('your lesson code is the base while its lesson isn’t finished, or the stub before you’ve written any', () => {
-    const yours = choose('led', project, files({ lessons: new Map([['led', LED]]) }), unfinished);
+  it('a first visit’s project runs: an LED loop in Build carries its 22 mA, with no lesson done', () => {
+    const code = build(chooseAll(project, NO_FILES, unfinished)).code;
+    const loop = ledLoop(330);
+    const sim = new BoardSim(undefined, () => code);
+    sim.sync(loop.board);
+    run(sim, 1);
+    expect(partOf(sim, loop.led).amps).toBeCloseTo(0.022, 3);
+  });
+
+  it('in another lesson, your lesson code while its lesson isn’t finished, or the stub before you’ve written any', () => {
+    const yours = choose('led', { lesson: 'a-knob' }, files({ lessons: new Map([['led', LED]]) }), unfinished);
     expect(yours.origin).toBe('lesson');
     expect(yours.source?.text).toBe(LED);
     expect(yours.source?.file).toBe('lessons/led.ts');
-    expect(choose('led', project, NO_FILES, unfinished).source?.text).toContain('NotWrittenYet');
+    expect(choose('led', { lesson: 'a-knob' }, NO_FILES, unfinished).source?.text).toContain('NotWrittenYet');
   });
 
   it('always your lesson code inside its own lesson, finished or not', () => {

@@ -3,11 +3,12 @@
  *
  *   1. the project's own source for it   projects/<project>/parts/<module>.ts, from "Edit source"
  *   2. the base:
- *      - your lesson code, while the lesson that introduces it isn't finished (or you're playing that lesson):
- *        lessons/<module>.ts, which starts as the lesson's empty stub
- *      - Bench's default, after that
+ *      - in a project (Build): Bench's default, always. Every part there is written, whether or not you've done the
+ *        lesson that teaches it.
+ *      - in a lesson: your lesson code while the lesson that introduces it isn't finished (and always in that
+ *        lesson): lessons/<module>.ts, which starts as the lesson's empty stub; Bench's default after that
  *
- * The base is the same everywhere: changing it for every project is changing it in the code.
+ * The base is the same in every project: changing it for all of them is changing it in the code.
  */
 import { buildCode, CodeError, DEFAULTS, MODULES, type Code, type ModuleId, type ModuleSource } from '@bench/engine';
 import { isLessonModule, lessonFile, LESSON_MODULES, STUB_SOURCES, type LessonModule } from './sources';
@@ -48,9 +49,9 @@ export function choose(module: ModuleId, scope: CodeScope, files: CodeFiles, fin
   return base(module, scope, files, finished);
 }
 
-/** What `module` runs when a project has no source of its own for it: the same everywhere. */
+/** What `module` runs without a project's own source for it: Bench's default in every project. */
 export function base(module: ModuleId, scope: CodeScope, files: CodeFiles, finished: (lesson: string) => boolean): Chosen {
-  if (isLessonModule(module)) {
+  if (!scope.project && isLessonModule(module)) {
     const lesson = LESSON_MODULES[module];
     if (scope.lesson === lesson || !finished(lesson)) return lessonSource(module, files);
   }
