@@ -1,7 +1,7 @@
 import { createContext, use, useEffect, useRef, useState } from 'react';
 import type { Board } from '../builder/board';
 import type { MeterState } from '../builder/meter';
-import type { BoardSim } from '../builder/sync';
+import type { BoardSim } from '../sim';
 import type { Lesson, LessonState, Step } from './lessons';
 
 /** How far through a lesson you are, saved so it survives a reload. */
@@ -34,6 +34,15 @@ export function readProgress(lesson: Lesson | undefined): ReadonlySet<string> {
   } catch {
     return new Set();
   }
+}
+
+/**
+ * Whether every step of a lesson is done, as saved. In the other lessons, a finished lesson's part runs Bench's default
+ * code; going back to a step makes it unfinished again, and your code is back there. A project in Build always runs
+ * Bench's default, finished or not, and the lesson itself always runs yours.
+ */
+export function isFinished(lesson: Lesson): boolean {
+  return readProgress(lesson).size === lesson.steps.length;
 }
 
 function save(lesson: Lesson, done: ReadonlySet<string>): void {

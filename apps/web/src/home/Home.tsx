@@ -1,6 +1,6 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { LESSONS } from '../lessons/lessons';
-import { readProgress } from '../lessons/progress';
+import { isFinished, readProgress } from '../lessons/progress';
 import { HREF } from '../routes';
 import { useRoving } from './roving';
 
@@ -13,8 +13,7 @@ interface MenuItem {
 /** The first lesson not yet finished, and how far into it you are. */
 function nextLesson() {
   for (const lesson of LESSONS) {
-    const done = readProgress(lesson).size;
-    if (done < lesson.steps.length) return { lesson, done };
+    if (!isFinished(lesson)) return { lesson, done: readProgress(lesson).size };
   }
   return undefined;
 }
@@ -33,7 +32,8 @@ export function Home() {
         ]
       : []),
     { href: HREF.lessons, title: 'Lessons', detail: 'Goals to reach, one step at a time' },
-    { href: HREF.build, title: 'Build', detail: 'A free board with every part so far' },
+    { href: HREF.boards, title: 'Build', detail: 'Your own boards, with every part so far' },
+    { href: HREF.settings, title: 'Settings', detail: 'Where your projects and your code are kept' },
   ];
   const roving = useRoving(items.length);
   const first = useRef<HTMLAnchorElement>(null);

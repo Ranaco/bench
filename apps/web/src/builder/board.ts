@@ -10,7 +10,21 @@ import type { Point } from '../geometry';
 export type Rotation = 0 | 90 | 180 | 270;
 
 /** A junction is where a wire was tapped: a dot that wires share. It never comes from the parts box. */
-export type PartKind = 'battery' | 'resistor' | 'led' | 'ground' | 'switch' | 'button' | 'knob' | 'capacitor' | 'transistor' | 'junction';
+export type PartKind =
+  | 'battery'
+  | 'resistor'
+  | 'led'
+  | 'ground'
+  | 'switch'
+  | 'button'
+  | 'knob'
+  | 'capacitor'
+  | 'transistor'
+  | 'diode'
+  | 'motor'
+  | 'driver'
+  | 'esp32'
+  | 'junction';
 
 export interface PlacedPart {
   readonly id: string;
@@ -79,6 +93,10 @@ const PREFIX: Readonly<Record<PartKind, string>> = {
   knob: 'RV',
   capacitor: 'C',
   transistor: 'Q',
+  diode: 'D',
+  motor: 'M',
+  driver: 'U',
+  esp32: 'U',
   junction: 'J',
 };
 
@@ -338,9 +356,15 @@ export function copyParts(board: Board, ids: readonly string[]): Clip {
 
 /**
  * Pastes a clip shifted by (dx, dy): new ids, the next free labels, and its
- * wires rewired to the new parts. Returns the board and the new parts' and wires' ids.
+ * wires rewired to the new parts. Returns the board, the new parts' and wires' ids, and which new part is a copy of
+ * which (by id), so anything kept beside the board (a part's own code, an ESP32's program) can be copied too.
  */
-export function pasteClip(board: Board, clip: Clip, dx: number, dy: number): { board: Board; parts: string[]; wires: string[] } {
+export function pasteClip(
+  board: Board,
+  clip: Clip,
+  dx: number,
+  dy: number,
+): { board: Board; parts: string[]; wires: string[]; renamed: ReadonlyMap<string, string> } {
   let nextId = board.nextId;
   const labels = board.parts.map((p) => p.label);
   const wireLabels = board.wires.map((w) => w.label);
@@ -364,6 +388,7 @@ export function pasteClip(board: Board, clip: Clip, dx: number, dy: number): { b
     board: { ...board, parts: [...board.parts, ...parts], wires: [...board.wires, ...wires], nextId },
     parts: parts.map((p) => p.id),
     wires: wires.map((w) => w.id),
+    renamed,
   };
 }
 

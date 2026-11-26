@@ -42,3 +42,16 @@ export function formatSI(value: number, unit: string, options: FormatOptions = {
   const parts = formatParts(value, unit, options);
   return parts.unit ? `${parts.number} ${parts.unit}` : parts.number;
 }
+
+/** How long ago, in a few words: "just now", "5 min ago", "3 h ago", "2 days ago", then the date. */
+export function ago(then: number, now: number): string {
+  const minutes = Math.floor((now - then) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${String(minutes)} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${String(hours)} h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${String(days)} days ago`;
+  return new Date(then).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}

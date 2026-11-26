@@ -28,6 +28,13 @@ export default defineConfig(
     languageOptions: { globals: globals.browser },
   },
   {
+    // The page runs in a browser: Node's modules are only for the dev server's own code (apps/web/server).
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{ group: ['node:*'], message: 'The page runs in a browser: Node is only for apps/web/server.' }] }],
+    },
+  },
+  {
     files: ['**/*.js'],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { globals: globals.node },

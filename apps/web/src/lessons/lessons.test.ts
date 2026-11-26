@@ -1,10 +1,23 @@
-import { Capacitor, Circuit, GROUND, NotWrittenYet, PN2222A, Potentiometer, Switch, TICK, Transistor } from '@bench/engine';
+import {
+  arduino,
+  Capacitor,
+  Circuit,
+  GROUND,
+  NotWrittenYet,
+  PN2222A,
+  Potentiometer,
+  ProgramRunner,
+  Switch,
+  TICK,
+  Transistor,
+  type Program,
+} from '@bench/engine';
 import { describe, expect, it } from 'vitest';
 import { addWire, EMPTY_BOARD, removePart, removeWire, setProp, type Board } from '../builder/board';
-import { ledLoop, place } from '../builder/fixtures';
+import { gpioWritten, ledLoop, place } from '../builder/fixtures';
 import { METER_START, type MeterState } from '../builder/meter';
-import { BoardSim } from '../builder/sync';
-import { A_KNOB, CAPACITORS, LIGHT_AN_LED, SWITCHES_AND_BUTTONS, TRANSISTORS, type Lesson } from './lessons';
+import { BoardSim } from '../sim';
+import { A_KNOB, CAPACITORS, LIGHT_AN_LED, MICROCONTROLLER, SWITCHES_AND_BUTTONS, TRANSISTORS, type Lesson } from './lessons';
 import { advance, backTo, currentStep } from './progress';
 
 /** Plays a lesson against a board: checks the current step each frame, as the page does. */
@@ -647,6 +660,153 @@ describe.runIf(transistorWritten)('Lesson 5: Transistors', () => {
 
 if (!transistorWritten) {
   it.todo('Lesson 5: needs your transistor, in packages/engine/src/lesson-5-transistors/transistor.ts');
+}
+
+const sixStep = (done: ReadonlySet<string>) => currentStep(MICROCONTROLLER, done)?.id;
+
+/** Plays a lesson against a board with a program on it: the program runs right here, a tick at a time. */
+async function playProgram(
+  sim: BoardSim,
+  board: Board,
+  seconds: number,
+  done: ReadonlySet<string> = new Set(),
+  meter: MeterState = METER_START,
+) {
+  sim.sync(board);
+  let progress = done;
+  for (let t = 0; t < seconds; t += 1 / 60) {
+    await sim.advance(1 / 60);
+    progress = advance(MICROCONTROLLER, progress, { board, snapshot: sim.getSnapshot(), meter });
+  }
+  return progress;
+}
+
+/** A BoardSim that runs `program` on its ESP32, on this thread. */
+const simRunning = (program: Program) => new BoardSim(() => new ProgramRunner(program));
+
+/** An ESP32 on its own, and a way to wire to its pins. */
+function withChip() {
+  const chip = place(EMPTY_BOARD, 'esp32');
+  const pin = (id: string) => ({ part: chip.id, pin: id });
+  return { board: chip.board, chip: chip.id, pin };
+}
+
+const BLINK2: Program = {
+  setup() {
+    arduino.pinMode(2, arduino.OUTPUT);
+  },
+  async loop() {
+    arduino.digitalWrite(2, arduino.HIGH);
+    await arduino.delay(500);
+    arduino.digitalWrite(2, arduino.LOW);
+    await arduino.delay(500);
+  },
+};
+
+/** Reads GPIO4 every 200 ms, set up as `mode`. */
+const readButton = (mode: arduino.PinMode): Program => ({
+  setup() {
+    arduino.pinMode(4, mode);
+  },
+  async loop() {
+    arduino.Serial.println(arduino.digitalRead(4));
+    await arduino.delay(200);
+  },
+});
+
+describe.runIf(gpioWritten)('Lesson 6: A microcontroller', () => {
+  it('starts with the meter across 3V3 and GND', async () => {
+    const { board, chip, pin } = withChip();
+    const meter: MeterState = { mode: 'volts', leads: { red: { kind: 'pin', pin: pin('v3') }, black: { kind: 'pin', pin: pin('gnd') } } };
+    const done = await playProgram(simRunning(BLINK2), board, 0.1, new Set(), meter);
+    expect(sixStep(done)).toBe('blink');
+    expect(chip).toBeDefined();
+  });
+
+  it('blinks an LED on GPIO2 from the program', async () => {
+    const { board: start, pin } = withChip();
+    const r = place(start, 'resistor', 0, 0, { ohms: 330 });
+    const led = place(r.board, 'led');
+    let board = addWire(led.board, pin('gpio2'), { part: r.id, pin: 'a' });
+    board = addWire(board, { part: r.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+    board = addWire(board, { part: led.id, pin: 'cathode' }, pin('gnd'));
+    const sim = simRunning(BLINK2);
+    let done = await playProgram(sim, board, 1.2, new Set(['power']));
+    expect(sixStep(done)).toBe('blink'); // twice on, so far
+    done = await playProgram(sim, board, 1.5, done);
+    expect(sixStep(done)).toBe('float');
+  });
+
+  it('sees a button’s pin float with INPUT, and hold firm with INPUT_PULLDOWN, pressed twice', async () => {
+    const { board: start, pin } = withChip();
+    const button = place(start, 'button');
+    const board = addWire(addWire(button.board, pin('v3'), { part: button.id, pin: 'a' }), { part: button.id, pin: 'b' }, pin('gpio4'));
+    const UP_TO_FLOAT = new Set(['power', 'blink']);
+    const floating = await playProgram(simRunning(readButton(arduino.INPUT)), board, 0.5, UP_TO_FLOAT);
+    expect(sixStep(floating)).toBe('pull');
+
+    const sim = simRunning(readButton(arduino.INPUT_PULLDOWN));
+    let done = await playProgram(sim, board, 0.3, floating);
+    for (let presses = 0; presses < 2; presses++) {
+      sim.press(button.id, true);
+      done = await playProgram(sim, board, 0.3, done);
+      sim.press(button.id, false);
+      done = await playProgram(sim, board, 0.3, done);
+    }
+    expect(sixStep(done)).toBe('knob');
+  });
+
+  it('reads the knob on GPIO34 across most of 0 to 4095 as it’s turned', async () => {
+    const { board: start, pin } = withChip();
+    const knob = place(start, 'knob', 0, 0, { turn: 0 });
+    let board = addWire(knob.board, pin('v3'), { part: knob.id, pin: 'a' });
+    board = addWire(board, { part: knob.id, pin: 'b' }, pin('gnd'));
+    board = addWire(board, { part: knob.id, pin: 'wiper' }, pin('gpio34'));
+    const sim = simRunning({
+      async loop() {
+        arduino.Serial.println(arduino.analogRead(34));
+        await arduino.delay(200);
+      },
+    });
+    let done: ReadonlySet<string> = new Set(['power', 'blink', 'float', 'pull']);
+    for (const turn of [0, 0.5, 1]) done = await playProgram(sim, setProp(board, knob.id, 'turn', turn), 0.3, done);
+    expect(sixStep(done)).toBe('drive');
+    expect(sim.getSnapshot().program?.serial).toMatch(/\d+\n/);
+  });
+
+  it('switches an LED on 9 V through the transistor from GPIO5, only once the grounds are shared', async () => {
+    const { board: start, pin } = withChip();
+    const battery = place(start, 'battery');
+    const load = place(battery.board, 'resistor', 0, 0, { ohms: 330 });
+    const led = place(load.board, 'led');
+    const q = place(led.board, 'transistor');
+    const feed = place(q.board, 'resistor', 0, 0, { ohms: 10000 });
+    let board = addWire(feed.board, { part: battery.id, pin: 'plus' }, { part: load.id, pin: 'a' });
+    board = addWire(board, { part: load.id, pin: 'b' }, { part: led.id, pin: 'anode' });
+    board = addWire(board, { part: led.id, pin: 'cathode' }, { part: q.id, pin: 'collector' });
+    board = addWire(board, { part: q.id, pin: 'emitter' }, pin('gnd'));
+    board = addWire(board, pin('gpio5'), { part: feed.id, pin: 'a' });
+    board = addWire(board, { part: feed.id, pin: 'b' }, { part: q.id, pin: 'base' });
+    const ON: Program = {
+      setup() {
+        arduino.pinMode(5, arduino.OUTPUT);
+        arduino.digitalWrite(5, arduino.HIGH);
+      },
+      async loop() {
+        await arduino.delay(1000);
+      },
+    };
+    const UP_TO_DRIVE = new Set(['power', 'blink', 'float', 'pull', 'knob']);
+    const apart = await playProgram(simRunning(ON), board, 0.3, UP_TO_DRIVE);
+    expect(sixStep(apart)).toBe('drive'); // the battery's − isn't joined to GND: no loop for the LED's current
+    const joined = addWire(board, { part: battery.id, pin: 'minus' }, pin('gnd2'));
+    const done = await playProgram(simRunning(ON), joined, 0.3, UP_TO_DRIVE);
+    expect(sixStep(done)).toBeUndefined();
+  });
+});
+
+if (!gpioWritten) {
+  it.todo('Lesson 6: needs your GPIO pin, in packages/engine/src/lesson-6-microcontroller/gpio.ts');
 }
 
 describe('Going back to a step', () => {

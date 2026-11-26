@@ -1,5 +1,6 @@
 import type { Node, Part, Readings, Stamp } from '../types';
-import { SLIDE_SWITCH, Switch, type SwitchSpec } from '../lesson-2-switches/switch';
+import { SLIDE_SWITCH, Switch, type SwitchSpec } from '../models/switch/default';
+import type { ModuleClasses, SwitchModel } from '../models/contracts';
 
 /** Which side a slide switch is slid to. */
 export type Side = 'a' | 'b';
@@ -17,8 +18,8 @@ export type Side = 'a' | 'b';
  * them closed. Use common and one side, and it's a plain on/off switch.
  */
 export class SlideSwitch implements Part {
-  readonly toA: Switch;
-  readonly toB: Switch;
+  readonly toA: SwitchModel;
+  readonly toB: SwitchModel;
 
   constructor(
     readonly name: string,
@@ -27,9 +28,11 @@ export class SlideSwitch implements Part {
     readonly b: Node,
     side: Side = 'a',
     readonly spec: SwitchSpec = SLIDE_SWITCH,
+    /** The code for one contact: yours from Lesson 2, or Bench's. */
+    contact: ModuleClasses['switch'] = Switch,
   ) {
-    this.toA = new Switch(name, common, a, side === 'a', spec);
-    this.toB = new Switch(name, common, b, side === 'b', spec);
+    this.toA = new contact(name, common, a, side === 'a', spec);
+    this.toB = new contact(name, common, b, side === 'b', spec);
   }
 
   /** The side common is connected to. */

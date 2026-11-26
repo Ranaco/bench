@@ -1,4 +1,6 @@
-import { GROUND, THERMAL_VOLTAGE, type Curve, type Node, type Part, type Readings, type Stamp } from '../types';
+import { GROUND, NotWrittenYet, THERMAL_VOLTAGE, type Curve, type Node, type Part, type Readings, type Stamp } from '../types';
+
+const FILE = 'packages/engine/src/lesson-5-transistors/transistor.ts';
 
 /** What a transistor's datasheet says, and the maker's own model of it. */
 export interface TransistorSpec {
@@ -151,17 +153,15 @@ export class Transistor implements Part {
   }
 
   diodes(s: Stamp, inside: Inside): void {
-    s.junction(inside.base, this.emitter, this.baseEmitter);
-    s.junction(inside.base, inside.collector, this.baseCollector);
+    throw new NotWrittenYet(this.name, FILE);
   }
 
   action(s: Stamp, inside: Inside): void {
-    s.controlledCurrent(inside.collector, this.emitter, inside.base, this.emitter, this.transfer) // s.controlledCurrent(from, to, plus, minus, curve)
-    s.controlledCurrent(this.emitter, inside.collector, inside.base, inside.collector, this.transfer)
+    throw new NotWrittenYet(this.name, FILE);
   }
 
   current(r: Readings): number {
-    return r.across(this.collector, this.inside.collector) / this.spec.collectorOhms;
+    throw new NotWrittenYet(this.name, FILE);
   }
 }
 

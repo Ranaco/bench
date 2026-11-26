@@ -1,28 +1,29 @@
-import { RED_LED } from '@bench/engine';
-import { lazy, Suspense, useCallback, useState, useSyncExternalStore } from 'react';
+import { MODULES, type ModuleId } from '@bench/engine';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { BoardCanvas, type MenuTarget } from '../builder/BoardCanvas';
 import type { PlacedPart } from '../builder/board';
-import { CAPACITOR_VALUES, capacitorSpec, CATALOG, supplyFor, turnOf } from '../builder/catalog';
+import { CATALOG } from '../builder/catalog';
+import { CAPACITOR_VALUES, capacitorSpec } from '../kinds/capacitor/model';
+import { turnOf } from '../kinds/knob/model';
 import { measure } from '../builder/meter';
 import { Inspector } from '../builder/Inspector';
 import { Palette } from '../builder/Palette';
 import { SpecSheetPanel } from '../builder/SpecSheet';
 import { useSession, type Session } from '../builder/session';
-import { TRACE_SECONDS, type BoardSim } from '../builder/sync';
-import { ChargeGraph } from '../components/ChargeGraph';
+import { type BoardSim } from '../sim';
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu';
 import { FloatingCard } from '../components/FloatingCard';
-import { IvGraph } from '../components/IvGraph';
 import { Meter } from '../components/Meter';
 import { Switch } from '../components/Switch';
 import { YourTurn } from '../components/YourTurn';
 import type { Point } from '../geometry';
-import { DATASHEET_POINTS, measureLed } from '../kit';
-import { measureTransistor } from '../measureTransistor';
-import { TransistorGraph, type TransistorDot } from '../components/TransistorGraph';
+import { LedGraph } from '../kinds/led/graph';
+import { VIEWS } from '../kinds/views';
 import { LessonPanel } from '../lessons/LessonPanel';
 import type { Subject } from '../three/Viewer3d';
 import { useShowWindow } from './show';
+import { askFor, type CodeView } from '../code/asked';
+import { useCode } from '../code/context';
 
 /**
  * The windows. Each is a thin view of the shared session, so any number can be
@@ -33,6 +34,12 @@ export function BoardWindow() {
   const session = useSession();
   const { canvas, board, sim, selection, select, moveParts, connect, replace, ghost, meter, placeLead, guessFirst, guesses } = session;
   const [menu, setMenu] = useState<{ x: number; y: number; at: Point; target: MenuTarget } | undefined>(undefined);
+  const show = useShowWindow();
+  const hasCode = useCode() !== undefined;
+  const showCode = (what: CodeView) => {
+    askFor(what);
+    show('code');
+  };
   const closeMenu = useCallback(() => {
     setMenu(undefined);
   }, []);
@@ -74,7 +81,7 @@ export function BoardWindow() {
           x={menu.x}
           y={menu.y}
           label={menu.target.kind === 'board' ? 'Board' : 'Selection'}
-          entries={menuEntries(session, menu.target, menu.at)}
+          entries={menuEntries(session, menu.target, menu.at, hasCode ? showCode : undefined)}
           onClose={closeMenu}
         />
       )}
@@ -82,8 +89,11 @@ export function BoardWindow() {
   );
 }
 
-/** What a right-click offers: on empty board, parts to add there; on parts and wires, what to do with the selection. */
-function menuEntries(session: Session, target: MenuTarget, at: Point): MenuEntry[] {
+/**
+ * What a right-click offers: on empty board, parts to add there; on parts and wires, what to do with the selection.
+ * `showCode` opens the Code window, where there's code to edit.
+ */
+function menuEntries(session: Session, target: MenuTarget, at: Point, showCode: ((what: CodeView) => void) | undefined): MenuEntry[] {
   const { board, selection } = session;
   if (target.kind === 'board') {
     return [
@@ -151,6 +161,25 @@ function menuEntries(session: Session, target: MenuTarget, at: Point): MenuEntry
     });
   }
   if (only?.kind === 'switch' || only?.kind === 'button') entries.push('separator');
+  if (only && showCode && CATALOG[only.kind].modules.length > 0) {
+    if (only.kind === 'esp32') {
+      entries.push({
+        label: 'Edit program',
+        onSelect: () => {
+          showCode({ view: 'program' });
+        },
+      });
+    }
+    entries.push(
+      {
+        label: 'Edit source',
+        onSelect: () => {
+          showCode({ view: 'source' });
+        },
+      },
+      'separator',
+    );
+  }
   if (parts.length > 0) {
     entries.push(
       {
@@ -210,7 +239,86 @@ export function InspectorWindow() {
         onShow3d={() => {
           show('view3d');
         }}
+        onShowCode={(what) => {
+          askFor(what);
+          show('code');
+        }}
       />
+    </div>
+  );
+}
+
+/** The module a lesson file is ("lessons/gpio.ts" is the pin), if it's one. */
+function moduleOf(file: string): ModuleId | undefined {
+  const name = file.split('/').at(-1)?.replace(/\.ts$/, '');
+  return MODULES.find((m) => m === name);
+}
+
+/** Each pin a program read while it could have gone either way, once, by GPIO number. */
+const floatingPins = (reads: readonly { readonly pin: number }[]) => [...new Set(reads.map((r) => r.pin))].sort((a, b) => a - b);
+
+/**
+ * The Serial Monitor: what the ESP32's program prints with Serial.println(), newest at the bottom, and whether it's
+ * running, waiting for your pin model, or stopped (and why).
+ */
+export function SerialWindow() {
+  const { sim, board, selection, select } = useSession();
+  const code = useCode();
+  const show = useShowWindow();
+  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
+  // Each ESP32 prints on its own: the one selected, or the first.
+  const chips = Object.keys(snapshot.programs);
+  const shownId = chips.find((id) => selection.parts.includes(id)) ?? chips.at(0);
+  const program = shownId === undefined ? undefined : snapshot.programs[shownId];
+  const chipLabel = chips.length > 1 ? board.parts.find((p) => p.id === shownId)?.label : undefined;
+  const log = useRef<HTMLPreElement>(null);
+  const serial = program?.serial;
+  // Each new line scrolls it to the bottom, where the newest is.
+  useEffect(() => {
+    const node = log.current;
+    if (node && serial !== undefined) node.scrollTop = node.scrollHeight;
+  }, [serial]);
+  if (!program) {
+    return (
+      <div className="pane pane-scroll serial-pane">
+        <p className="pane-note">Put an ESP32 on the board to run your program. What it prints with Serial.println() shows here.</p>
+      </div>
+    );
+  }
+  const floating = floatingPins(program.floating);
+  return (
+    <div className="pane serial-pane">
+      <div className="serial-head">
+        <p className={program.failure ? 'serial-status stopped' : 'serial-status'}>
+          {chipLabel !== undefined && <strong>{`${chipLabel}: `}</strong>}
+          {program.failure
+            ? `Stopped: ${program.failure}`
+            : program.runs
+              ? 'Running your program.'
+              : 'Waiting for your pin’s code: the program runs once it’s written.'}
+        </p>
+        {code && (
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              select({ parts: [program.chip], wires: [] });
+              askFor({ view: 'program' });
+              show('code');
+            }}
+          >
+            Edit program
+          </button>
+        )}
+      </div>
+      {floating.length > 0 && (
+        <p className="serial-warning">
+          {`${floating.map((pin) => `GPIO${String(pin)}`).join(', ')} ${floating.length === 1 ? 'was' : 'were'} read while ${floating.length === 1 ? 'it' : 'they'} could have gone either way: a real chip could have read HIGH or LOW. Give ${floating.length === 1 ? 'it' : 'each'} a pull-up or pull-down.`}
+        </p>
+      )}
+      <pre className="serial-log" ref={log} aria-live="polite">
+        {program.serial || ' '}
+      </pre>
     </div>
   );
 }
@@ -228,13 +336,30 @@ export function SpecWindow() {
 // three.js, react-three-fiber and drei are big: they load the first time the 3D window opens, not with the rest of
 // Bench.
 const Viewer3d = lazy(() => import('../three/Viewer3d'));
+const CodeEditor = lazy(() => import('../code/CodeWindow'));
+
+/** The Code window: the selected part's code, in an editor that loads the first time the window is shown. */
+export function CodeWindow({ shown = true }: { readonly shown?: boolean }) {
+  const [opened, setOpened] = useState(shown);
+  if (shown && !opened) setOpened(true);
+  return (
+    <div className="pane pane-code">
+      {opened && (
+        <Suspense fallback={<p className="pane-note">Loading the editor…</p>}>
+          <CodeEditor />
+        </Suspense>
+      )}
+    </div>
+  );
+}
 
 /** The parts that have a 3D model so far. */
-type Modelled = 'knob' | 'capacitor' | 'transistor';
+type Modelled = 'knob' | 'capacitor' | 'transistor' | 'esp32';
 const MODELLED: readonly { readonly kind: Modelled; readonly name: string }[] = [
   { kind: 'knob', name: 'Knob' },
   { kind: 'capacitor', name: 'Capacitor' },
   { kind: 'transistor', name: 'Transistor' },
+  { kind: 'esp32', name: 'ESP32' },
 ];
 const isModelled = (kind: string | undefined): kind is Modelled => MODELLED.some((m) => m.kind === kind);
 
@@ -251,6 +376,7 @@ export function View3dWindow({ shown = true }: { readonly shown?: boolean }) {
 
 function View3d() {
   const s = useSession();
+  const code = useCode();
   const snapshot = useSyncExternalStore(s.sim.subscribe, s.sim.getSnapshot);
   const [loose, setLoose] = useState<{ kind: Modelled | undefined; turn: number; uf: (typeof CAPACITOR_VALUES)[number] }>({
     kind: undefined,
@@ -270,8 +396,11 @@ function View3d() {
   const kind = linkedKind ?? looseKind;
 
   const transistor = reading?.written ? reading.transistor : undefined;
+  const chip = reading?.written ? reading.chip : undefined;
   const subject: Subject =
-    kind === 'transistor'
+    kind === 'esp32'
+      ? { kind, label: linked?.label, live: chip && { pins: chip.readout?.pins ?? chip.pins, supplyAmps: chip.readout?.supplyAmps ?? chip.supplyAmps } }
+      : kind === 'transistor'
       ? {
           kind,
           label: linked?.label,
@@ -286,6 +415,7 @@ function View3d() {
             else setLoose({ ...loose, turn });
           },
           label: linked?.label,
+          potentiometer: linked && code ? code.codeFor(linked).potentiometer : undefined,
           live: reading?.written && reading.knob ? { volts: reading.knob.volts, wiperAmps: reading.knob.wiperAmps } : undefined,
         }
       : {
@@ -326,112 +456,17 @@ function View3d() {
 }
 
 /**
- * The Graph: a capacitor's voltage over time, or an LED's current against its voltage. It draws the selected one,
- * or the first capacitor, or the first LED.
+ * The Graph: whatever the selected part's kind draws (an LED's curve, a capacitor's charge, a transistor's gain, an
+ * ESP32's pins), or with nothing selected, the board's part whose kind ranks highest. With none, the LED's curve.
  */
 export function GraphWindow() {
-  const { board, sim, selection } = useSession();
-  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
-  const graphed = board.parts.filter((p) => p.kind === 'capacitor' || p.kind === 'led' || p.kind === 'transistor');
-  const chosen =
-    graphed.find((p) => selection.parts.includes(p.id)) ??
-    graphed.find((p) => p.kind === 'transistor') ??
-    graphed.find((p) => p.kind === 'capacitor') ??
-    graphed.find((p) => p.kind === 'led');
-  if (chosen?.kind === 'transistor') return <TransistorPane key={chosen.id} chosen={chosen} />;
-  if (chosen?.kind === 'capacitor') {
-    const trace = sim.trace(chosen.id);
-    const batteries = board.parts.filter((p) => p.kind === 'battery').map((p) => supplyFor(p.props.supply).volts);
-    const written = snapshot.parts[chosen.id]?.written !== false;
-    return (
-      <div className="pane pane-scroll graph-pane">
-        <p className="pane-note">
-          {written
-            ? `${chosen.label}’s voltage over the last ${String(TRACE_SECONDS)} seconds. Click an LED to graph it instead.`
-            : `${chosen.label} isn’t in the circuit until your capacitor is written.`}
-        </p>
-        <ChargeGraph
-          times={trace?.times ?? []}
-          volts={trace?.volts ?? []}
-          now={snapshot.time}
-          span={TRACE_SECONDS}
-          supply={batteries.length > 0 ? Math.max(...batteries) : undefined}
-        />
-        <p className="graph-note">
-          Charging, it climbs fast, then slower and slower: the fuller it is, the less push is left to fill it. Filling
-          from empty through a resistor, with nothing else on it, it reaches the dotted 63 % line in resistance ×
-          capacitance seconds.
-        </p>
-      </div>
-    );
-  }
-  return <LedGraph chosen={chosen} />;
-}
-
-/** How many places a transistor's trail remembers. */
-const TRAIL = 160;
-
-/** Far enough from the last place to be a new one: 1 % of either current, or a tenth of a microamp. */
-const moved = (a: TransistorDot, b: TransistorDot) =>
-  [
-    [a.baseAmps, b.baseAmps],
-    [a.collectorAmps, b.collectorAmps],
-  ].some(([u, v]) => Math.abs(u - v) > Math.max(1e-7, 0.01 * Math.abs(v)));
-
-/** The selected transistor's two graphs, with where it's been since the graph opened. */
-function TransistorPane({ chosen }: { readonly chosen: PlacedPart }) {
-  const { sim } = useSession();
-  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
-  const [curve] = useState(measureTransistor);
-  const [trail, setTrail] = useState<readonly TransistorDot[]>([]);
-  const reading = snapshot.parts[chosen.id];
-  const q = reading?.written ? reading.transistor : undefined;
-  const collectorAmps = q?.collectorAmps;
-  const now = q && collectorAmps !== undefined ? { baseVolts: q.baseVolts, baseAmps: q.baseAmps, collectorAmps } : undefined;
-  // Somewhere new: remember it (state worked out while rendering, as React allows, rather than in an effect).
-  const last = trail.at(-1);
-  if (now && (!last || moved(last, now))) setTrail([...trail.slice(1 - TRAIL), now]);
-
-  return (
-    <div className="pane pane-scroll graph-pane">
-      <p className="pane-note">
-        {curve
-          ? `${chosen.label}: its collector current against the voltage on its base, then against the current into it. Click an LED or a capacitor to graph it instead.`
-          : `${chosen.label} isn’t in the circuit until your transistor’s diodes() and action() are written.`}
-      </p>
-      <TransistorGraph curve={curve} now={now} trail={trail} />
-      <p className="graph-note">
-        {now
-          ? 'The top one is a diode’s climb: almost nothing until about 0.6 V, then about 48 times more for every 0.1 V. In the bottom one, while it’s amplifying, the dot rides the line, 256 times the base current; fully on, it leaves the line and goes flat, because the rest of the circuit is setting the current, not the base.'
-          : 'No dot yet: there’s no collector reading until your transistor’s current() is written.'}
-      </p>
-    </div>
-  );
-}
-
-/** The selected LED's current against its voltage: your model's curve, the datasheet's dots, and where it is now. */
-function LedGraph({ chosen }: { readonly chosen: PlacedPart | undefined }) {
-  const { sim } = useSession();
-  const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
-  const [curve] = useState(measureLed);
-  const reading = chosen && snapshot.parts[chosen.id];
-  const operating =
-    reading?.written && !reading.burnt && reading.amps !== undefined ? { volts: reading.volts, amps: reading.amps } : undefined;
-
-  return (
-    <div className="pane pane-scroll graph-pane">
-      <p className="pane-note">
-        {chosen
-          ? `${chosen.label}${reading?.burnt ? ', burnt out' : ''}. Click another LED to graph it instead.`
-          : 'Add an LED to see where it settles, or a capacitor to watch it fill.'}
-      </p>
-      <IvGraph curve={curve} datasheet={DATASHEET_POINTS} operating={operating} maxAmps={RED_LED.maxAmps} />
-      <p className="graph-note">
-        The line is your LED model, the dots are the real LED read off its datasheet, and the bright dot is where it is
-        right now.
-      </p>
-    </div>
-  );
+  const { board, selection } = useSession();
+  const graphed = board.parts.filter((p) => VIEWS[p.kind].Graph !== undefined);
+  const rank = (p: PlacedPart) => VIEWS[p.kind].graphRank ?? 0;
+  const chosen = graphed.find((p) => selection.parts.includes(p.id)) ?? [...graphed].sort((a, b) => rank(b) - rank(a)).at(0);
+  const Graph = chosen ? VIEWS[chosen.kind].Graph : undefined;
+  if (!chosen || !Graph) return <LedGraph />;
+  return <Graph key={chosen.id} chosen={chosen} />;
 }
 
 /** The multimeter's face: Volts or Amps, the reading, and guessing it first. Its leads live on the board. */
@@ -474,6 +509,9 @@ export function LessonWindow() {
 /** A card over the board when something needs you: a part model to write, or a circuit that won't settle. */
 function StatusCard({ sim }: { readonly sim: BoardSim }) {
   const snapshot = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
+  const { board, select } = useSession();
+  const code = useCode();
+  const show = useShowWindow();
   const [folded, setFolded] = useState(false);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const missing = snapshot.notWritten.at(0);
@@ -492,6 +530,13 @@ function StatusCard({ sim }: { readonly sim: BoardSim }) {
             </p>
           ),
         }
+      : snapshot.program?.failure
+        ? {
+            eyebrow: 'Your program stopped',
+            title: 'Fix it and save',
+            tone: 'problem' as const,
+            body: <pre>{snapshot.program.failure}</pre>,
+          }
       : missing
         ? {
             eyebrow: 'Your turn',
@@ -502,6 +547,13 @@ function StatusCard({ sim }: { readonly sim: BoardSim }) {
                 part={missing.part}
                 file={missing.file}
                 methods={snapshot.notWritten.filter((m) => m.part === missing.part).map((m) => m.method)}
+                home={code?.store.home}
+                onOpen={() => {
+                  const part = board.parts.find((p) => p.label === missing.part);
+                  if (part) select({ parts: [part.id], wires: [] });
+                  askFor({ view: 'source', module: moduleOf(missing.file) });
+                  show('code');
+                }}
               />
             ),
           }

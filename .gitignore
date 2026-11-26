@@ -2,3 +2,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .vite/
+# Where your own work lives (Settings in Bench): yours, not the repo's.
+bench.local.json
+# This machine's link to its Vercel project, and the token `vercel link` keeps beside it.
+.vercel/
+.env*

@@ -1,0 +1,8 @@
+# Built on Vercel from the source alone. Never upload your home folder's settings (bench.local.json names it), and a
+# build made from it would carry your own lesson code: Vercel can't see that folder, so its build is a clean Bench.
+bench.local.json
+.env*
+node_modules
+dist
+.vite
+*.tsbuildinfo

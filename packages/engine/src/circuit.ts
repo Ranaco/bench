@@ -1,4 +1,5 @@
-import { solveInPlace } from './linear';
+import { SingularMatrix, solveAllInPlace, solveInPlace } from './linear';
+import { FLICKER_FUSION_HZ, SeenAverage } from './seen';
 import {
   AMBIENT_CELSIUS,
   GROUND,
@@ -16,6 +17,12 @@ import {
 
 /** The engine's heartbeat, in seconds. Time always advances in whole ticks. */
 export const TICK = 0.001;
+
+/**
+ * The first of the small steps a tick is cut into after something changes all at once, with a fast part on the board
+ * (see Part.fast), s. Each step after it is twice as long, until the tick is done.
+ */
+export const FIRST_STEP = 1e-8;
 
 /** A whisper of conductance from every node to ground, so no node floats. */
 const GMIN = 1e-12;
@@ -102,6 +109,19 @@ interface Controlled extends Guessed {
 const guessKey = (a: Node, b: Node) => `${String(a)}>${String(b)}`;
 
 /** A solved linear system, with the stamps that produced it. */
+/**
+ * What a multimeter would show: averages over the ticks since the last readout, as a meter averages between the
+ * numbers it shows. A part or node that's been there only part of that time is averaged over its own ticks.
+ */
+export interface Readout {
+  /** Each part's average current, A, for parts whose current() is written. */
+  readonly amps: ReadonlyMap<Part, number>;
+  /** Each of those parts' average power, W: volts × amps tick by tick, then averaged (not average volts × average amps). */
+  readonly watts: ReadonlyMap<Part, number>;
+  /** A node's average voltage, V; undefined for one with no ticks in that time. */
+  volts(node: Node): number | undefined;
+}
+
 interface Solved {
   readonly assembly: Assembly;
   readonly solution: Float64Array;
@@ -132,9 +152,25 @@ export class Circuit {
    * new temperature), so it describes the same moment as the voltages do.
    */
   private readonly measured = new Map<Part, number | undefined>();
+  /** Each part's current × time, and the time, over the ticks since averageCurrents() last ran. */
+  private readonly sums = new Map<Part, { charge: number; seconds: number }>();
+  /** Each part's current as an eye would see the light it makes (see seen.ts), from tick to tick. */
+  private readonly seen = new Map<Part, SeenAverage>();
+  /** Each part's charge, energy and time since the last readout (see takeReadout). */
+  private readonly meterParts = new Map<Part, { charge: number; energy: number; seconds: number }>();
+  /** Each node's volts × time, and its time, since the last readout, by node number. */
+  private meterVolts: number[] = [];
+  private meterSeconds: number[] = [];
   private last: Solved | undefined;
   private ticks = 0;
   private pending = 0;
+  /** True when something changed all at once since the last tick (see changed()). */
+  private sudden = false;
+  /** How far into the current tick the step being solved starts, s, and how long it is. */
+  private within = 0;
+  private stepDt = TICK;
+  /** The first small step after a sudden change (see FIRST_STEP); a test can shrink it to check it's small enough. */
+  firstStep = FIRST_STEP;
   /** Nodes given back by `release`, reused before new ones are made. */
   private readonly spare: Node[] = [];
 
@@ -155,14 +191,26 @@ export class Circuit {
   /** Gives a node back once no part uses it, so the next `node()` can reuse it. */
   release(node: Node): void {
     if (node === GROUND || this.spare.includes(node)) return;
+    // Whatever reuses it starts its readout afresh.
+    this.meterVolts[node] = 0;
+    this.meterSeconds[node] = 0;
     this.nodeNames[node] = 'spare';
     this.spare.push(node);
+  }
+
+  /**
+   * Says something just changed all at once, outside the solver: a switch flipped, a pin written, a knob turned.
+   * Adding, removing or replacing a part says so itself.
+   */
+  changed(): void {
+    this.sudden = true;
   }
 
   /** Adds a part and returns it. */
   add<P extends Part>(part: P): P {
     this.parts.push(part);
     this.measured.delete(part);
+    this.sudden = true;
     return part;
   }
 
@@ -175,8 +223,12 @@ export class Circuit {
     const index = this.parts.indexOf(part);
     if (index === -1) return;
     this.parts.splice(index, 1);
+    this.sudden = true;
     this.missing.delete(part);
     this.measured.delete(part);
+    this.sums.delete(part);
+    this.seen.delete(part);
+    this.meterParts.delete(part);
     this.junctionVolts.delete(part);
     const internal = this.internals.get(part);
     if (internal) {
@@ -190,8 +242,12 @@ export class Circuit {
     const index = this.parts.indexOf(old);
     if (index === -1) throw new Error(`${old.name} isn't in this circuit`);
     this.parts[index] = next;
+    this.sudden = true;
     this.missing.delete(old);
     this.measured.delete(old);
+    this.sums.delete(old);
+    this.seen.delete(old);
+    this.meterParts.delete(old);
     this.junctionVolts.delete(old);
     const internal = this.internals.get(old);
     if (internal) {
@@ -218,14 +274,30 @@ export class Circuit {
     let iterations = 0;
     const unsettled = new Set<string>();
     for (let i = 0; i < due; i++) {
-      const result = this.solve();
-      iterations = Math.max(iterations, result.iterations);
-      this.measure();
-      if (result.converged) this.settleParts();
-      else {
-        converged = false;
-        for (const name of result.unsettled) unsettled.add(name);
+      // A tick is one step, unless something just changed all at once with a fast part on the board: then small
+      // steps, each twice the last, so the fast part's quick reaction is followed rather than jumped over.
+      const fine = this.sudden && this.parts.some((part) => part.fast === true);
+      this.sudden = false;
+      let step = fine ? this.firstStep : TICK;
+      for (this.within = 0; ; this.within += this.stepDt, step *= 2) {
+        // The last step lands exactly on the tick: one that would leave less than itself to go takes the rest.
+        const last = TICK - this.within - step < step;
+        this.stepDt = last ? TICK - this.within : step;
+        const result = this.solve();
+        iterations = Math.max(iterations, result.iterations);
+        if (last) {
+          this.measure();
+          this.addToAverages();
+        }
+        if (result.converged) this.settleParts();
+        else {
+          converged = false;
+          for (const name of result.unsettled) unsettled.add(name);
+        }
+        if (last) break;
       }
+      this.within = 0;
+      this.stepDt = TICK;
       this.ticks++;
       this.time = this.ticks * TICK;
     }
@@ -253,6 +325,27 @@ export class Circuit {
     if (this.lacks(part, 'current') || this.lacks(part, 'stamp')) return undefined;
     if (this.measured.has(part)) return this.measured.get(part);
     return this.call(part, 'current', () => part.current(this.readings()));
+  }
+
+  /**
+   * Ohms between two nodes as the last solve left the circuit: how far a current pushed in at `a` and out at `b` would
+   * move the voltage between them, per amp. Batteries count as their internal resistance, diodes at the slope they
+   * settled on. Infinity before the first solve, or when nothing connects them but the solver's own leak to ground.
+   */
+  resistanceBetween(a: Node, b: Node): number {
+    return this.resistancesBetween([[a, b]])[0] ?? Infinity;
+  }
+
+  /** resistanceBetween() for several pairs at once, for the cost of little more than one. */
+  resistancesBetween(pairs: readonly (readonly [Node, Node])[]): number[] {
+    const last = this.last;
+    if (!last) return pairs.map(() => Infinity);
+    try {
+      return last.assembly.resistances(last.nodeCount, pairs);
+    } catch (error) {
+      if (error instanceof SingularMatrix) return pairs.map(() => Infinity);
+      throw error;
+    }
   }
 
   /** Watts `part` is turning into heat (or light), or negative when it's supplying power. */
@@ -297,8 +390,8 @@ export class Circuit {
   private readings(): Readings {
     const last = this.last;
     return {
-      time: this.time,
-      dt: TICK,
+      time: this.time + this.within,
+      dt: this.stepDt,
       ambient: this.ambient,
       voltage: (node) => this.voltage(node),
       across: (a, b) => this.across(a, b),
@@ -317,11 +410,94 @@ export class Circuit {
     }
   }
 
+  /**
+   * Each part's average current over the ticks since this was last called, A, and starts again; a part with no
+   * ticks since isn't in it. How much charge moved over that time: what a wire's flow dots move by. (How bright a
+   * light looks is seenCurrent(): an eye's time, not a screen frame's.)
+   */
+  averageCurrents(): Map<Part, number> {
+    const averages = new Map<Part, number>();
+    for (const [part, { charge, seconds }] of this.sums) averages.set(part, charge / seconds);
+    this.sums.clear();
+    return averages;
+  }
+
+  /**
+   * A part's current as an eye would see the light it makes, A: a light flickering faster than an eye can follow
+   * looks as bright as its average (see seen.ts). Undefined before its first tick.
+   */
+  seenCurrent(part: Part): number | undefined {
+    return this.seen.get(part)?.amps;
+  }
+
+  /** Every part's and node's averages since the last readout (see Readout), and starts again. */
+  takeReadout(): Readout {
+    const amps = new Map<Part, number>();
+    const watts = new Map<Part, number>();
+    for (const [part, { charge, energy, seconds }] of this.meterParts) {
+      amps.set(part, charge / seconds);
+      watts.set(part, energy / seconds);
+    }
+    const volts = this.meterVolts;
+    const seconds = this.meterSeconds;
+    this.meterParts.clear();
+    this.meterVolts = [];
+    this.meterSeconds = [];
+    return {
+      amps,
+      watts,
+      volts: (node) => {
+        if (node === GROUND) return 0;
+        const time = seconds[node] ?? 0;
+        return time > 0 ? (volts[node] ?? 0) / time : undefined;
+      },
+    };
+  }
+
+  /** Adds the tick just solved to each part's running averages. */
+  private addToAverages(): void {
+    this.addToReadout();
+    for (const [part, amps] of this.measured) {
+      if (amps === undefined) continue;
+      const seen = this.seen.get(part);
+      if (seen) seen.add(amps);
+      else this.seen.set(part, new SeenAverage(amps, Math.round(1 / (FLICKER_FUSION_HZ * TICK))));
+      const sum = this.sums.get(part);
+      if (sum) {
+        sum.charge += amps * TICK;
+        sum.seconds += TICK;
+      } else this.sums.set(part, { charge: amps * TICK, seconds: TICK });
+    }
+  }
+
+  /** Adds the tick just solved to the readout: each part's current and power, each node's voltage. */
+  private addToReadout(): void {
+    const last = this.last;
+    if (!last) return;
+    for (const [part, amps] of this.measured) {
+      if (amps === undefined) continue;
+      const entry = this.meterParts.get(part);
+      if (entry) {
+        entry.charge += amps * TICK;
+        entry.seconds += TICK;
+      } else this.meterParts.set(part, { charge: amps * TICK, energy: 0, seconds: TICK });
+    }
+    // One pass over every current for every part's power: powerOf() for each would go over them all for each.
+    for (const flow of this.flows(last)) {
+      const entry = flow.owner && this.meterParts.get(flow.owner);
+      if (entry) entry.energy += flow.watts * TICK;
+    }
+    for (let node = 1; node <= last.nodeCount; node++) {
+      this.meterVolts[node] = (this.meterVolts[node] ?? 0) + voltageIn(last.solution, node as Node) * TICK;
+      this.meterSeconds[node] = (this.meterSeconds[node] ?? 0) + TICK;
+    }
+  }
+
   private settleParts(): void {
     const readings = this.readings();
     for (const part of this.parts) {
       if (this.lacks(part, 'stamp') || this.lacks(part, 'settle')) continue;
-      this.call(part, 'settle', () => part.settle?.(readings, TICK));
+      this.call(part, 'settle', () => part.settle?.(readings, this.stepDt));
     }
   }
 
@@ -368,7 +544,7 @@ export class Circuit {
       unsettled.clear();
       for (const guessed of [...assembly.junctions, ...assembly.controlled]) {
         const reached = voltageIn(solution, guessed.a) - voltageIn(solution, guessed.b);
-        const next = limitJunction(reached, guessed.volts);
+        const next = limitJunction(reached, guessed.volts, guessed.curve.knee);
         if (next !== reached || !junctionSettled(guessed, reached)) unsettled.add(guessed.owner.name);
         this.guessesFor(guessed.owner).set(guessKey(guessed.a, guessed.b), next);
       }
@@ -379,8 +555,8 @@ export class Circuit {
 
   private assemble(): Assembly {
     const assembly = new Assembly(
-      this.time,
-      TICK,
+      this.time + this.within,
+      this.stepDt,
       this.ambient,
       () => this.nodeNames.length - 1,
       (owner, name) => this.internalNode(owner, name),
@@ -468,9 +644,9 @@ function voltageIn(solution: Float64Array, node: Node): number {
 }
 
 /** Stops a forward-biased junction leaping so far that its exponential overflows. */
-function limitJunction(reached: number, previous: number): number {
-  if (reached <= JUNCTION_KNEE || reached <= previous + JUNCTION_STEP) return reached;
-  return Math.max(previous + JUNCTION_STEP, JUNCTION_KNEE);
+function limitJunction(reached: number, previous: number, knee = 0): number {
+  if (reached <= knee + JUNCTION_KNEE || reached <= previous + JUNCTION_STEP) return reached;
+  return Math.max(previous + JUNCTION_STEP, knee + JUNCTION_KNEE);
 }
 
 /** True when the guess barely moved and the curve agrees with its straight-line estimate. */
@@ -581,6 +757,34 @@ class Assembly implements Stamp {
 
   /** Modified nodal analysis: one equation per node, plus one per voltage source. */
   solve(nodes: number): Float64Array {
+    const { matrix, rhs, size } = this.equations(nodes);
+    return solveInPlace(matrix, rhs, size);
+  }
+
+  /**
+   * Ohms between two nodes as these stamps describe the circuit: with every source turned off (a voltage source as a
+   * short, a current source as a gap) and each curve straightened at its guess, the volts it takes to push 1 A in at
+   * `a` and out at `b`.
+   */
+  resistance(nodes: number, a: Node, b: Node): number {
+    return this.resistances(nodes, [[a, b]])[0] ?? Infinity;
+  }
+
+  /** The same for several pairs of nodes, from one elimination: a pin per pair, a microcontroller's worth at once. */
+  resistances(nodes: number, pairs: readonly (readonly [Node, Node])[]): number[] {
+    const { matrix, size } = this.equations(nodes);
+    const pushes = pairs.map(([a, b]) => {
+      const push = new Float64Array(size);
+      if (a !== GROUND) push[a - 1] += 1;
+      if (b !== GROUND) push[b - 1] -= 1;
+      return push;
+    });
+    const volts = solveAllInPlace(matrix, pushes, size);
+    return pairs.map(([a, b], i) => (a === b ? 0 : voltageIn(volts[i] ?? new Float64Array(), a) - voltageIn(volts[i] ?? new Float64Array(), b)));
+  }
+
+  /** The equations for one solve: a matrix of conductances and voltage-source rows, and what's pushed into each. */
+  private equations(nodes: number): { matrix: Float64Array; rhs: Float64Array; size: number } {
     const size = nodes + this.voltageSources.length;
     const matrix = new Float64Array(size * size);
     const rhs = new Float64Array(size);
@@ -633,7 +837,7 @@ class Assembly implements Stamp {
       rhs[row] = s.volts;
     }
 
-    return solveInPlace(matrix, rhs, size);
+    return { matrix, rhs, size };
   }
 
   private currentOwner(): Part {

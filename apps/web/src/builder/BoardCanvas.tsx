@@ -17,7 +17,9 @@ import { flowSpeed, ledGlow } from '../flow';
 import { formatSI } from '../format';
 import type { Point } from '../geometry';
 import { moveParts, samePin, type Board, type Landing, type PartKind, type PinRef, type PlacedPart } from './board';
-import { capacitorSpec, CATALOG, GRID, KNOB_DIAL as DIAL, pinAt, snap, supplyFor, turnOf } from './catalog';
+import { CATALOG, GRID, pinAt, snap } from './catalog';
+import { VIEWS } from '../kinds/views';
+import { turnOf } from '../kinds/knob/model';
 import { liveTarget, measure, type MeterState, type ProbeTarget, type Tool } from './meter';
 import {
   boardBounds,
@@ -36,8 +38,12 @@ import {
   wireRoute,
 } from './route';
 import { includes, NOTHING, only, size, toggle, union, type Selection } from './selection';
-import { pinKey, type BoardSim, type BoardSnapshot, type PartReading } from './sync';
-import { ButtonCap, KnobDial, KnobWiper, LedLight, PartSymbol, SwitchLever } from './symbols';
+import { pinKey, type BoardSim, type BoardSnapshot, type PartReading } from '../sim';
+import { PartSymbol } from './symbols';
+import { LedLight } from '../kinds/led/symbol';
+
+/** A part held down while pressed (a push button, a motor's shaft), rather than dragged. */
+const holdable = (part: PlacedPart | undefined) => part !== undefined && CATALOG[part.kind].press !== undefined;
 
 /** What the page needs from the canvas: dropping parts carried in from the palette, and the view. */
 export interface CanvasApi {
@@ -181,28 +187,7 @@ function parsePin(key: string | null): PinRef | undefined {
 const TURN_PIXELS = 200;
 
 /** What's written beside a part: its name, then its value. */
-function labelLines(part: PlacedPart): string[] {
-  switch (part.kind) {
-    case 'battery':
-      return [part.label, supplyFor(part.props.supply).label];
-    case 'resistor':
-      return [part.label, formatSI(Number(part.props.ohms), 'Ω', { trim: true })];
-    case 'knob':
-      return [part.label, '10 kΩ'];
-    case 'capacitor':
-      // Rounded: 0.0022 F × 1e6 is 2199.9999999999995 in floating point.
-      return [part.label, `${String(Math.round(capacitorSpec(part.props).farads * 1e6))} µF`];
-    case 'transistor':
-      return [part.label, 'PN2222A'];
-    case 'led':
-    case 'switch':
-    case 'button':
-      return [part.label];
-    case 'ground':
-    case 'junction':
-      return []; // the symbol says it all
-  }
-}
+const labelLines = (part: PlacedPart) => VIEWS[part.kind].label(part);
 
 /**
  * One more line for a part's label, for live notes like its temperature: below
@@ -394,12 +379,13 @@ export function BoardCanvas({ ref, ...props }: BoardCanvasProps) {
     window.getSelection()?.removeAllRanges();
 
     // A second finger pinches the view with the first, whatever the first was doing (moving a part, say,
-    // which then stays put). Except on a push button's cap: two fingers can hold down two buttons.
+    // which then stays put). Except on something held down (a push button's cap, a motor's shaft): two fingers can
+    // hold down two.
     if (event.pointerType === 'touch') {
       fingers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
       const other = [...fingers.current.keys()].find((id) => id !== event.pointerId && !holding.current.has(id));
       const cap = element?.closest('[data-actuator]')?.getAttribute('data-actuator');
-      if (other !== undefined && !(cap && parts.get(cap)?.kind === 'button')) {
+      if (other !== undefined && !(cap && holdable(parts.get(cap)))) {
         const at = fingers.current.get(other);
         if (!camera.has(other) && at) {
           setGesture(undefined);
@@ -455,7 +441,7 @@ export function BoardCanvas({ ref, ...props }: BoardCanvasProps) {
       return;
     }
 
-    // A push button's cap: held down for as long as the pointer is.
+    // A push button's cap, or a motor's shaft: held down for as long as the pointer is.
     const actuator = element?.closest('[data-actuator]')?.getAttribute('data-actuator');
     // A knob's dial: dragged to turn it.
     const knob = actuator ? parts.get(actuator) : undefined;
@@ -466,9 +452,13 @@ export function BoardCanvas({ ref, ...props }: BoardCanvasProps) {
       setGesture({ type: 'turn', part: actuator, pointer: event.pointerId, startX: event.clientX, startY: event.clientY, from: turnOf(knob.props) });
       return;
     }
-    if (actuator && !additive && parts.get(actuator)?.kind === 'button') {
+    if (actuator && !additive && holdable(parts.get(actuator))) {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
+      // A motor held still is what you'd watch: its current climbs. A button pressed is for watching something else.
+      if (parts.get(actuator)?.kind === 'motor' && !(includes(selection, 'part', actuator) && size(selection) === 1)) {
+        props.onSelect(only('part', actuator));
+      }
       holding.current.set(event.pointerId, actuator);
       props.onPress(actuator, true);
       return;
@@ -847,6 +837,7 @@ function PartView(props: {
   const spot = labelSpot(part);
   const outline = partBox(part);
   const { box, name } = CATALOG[part.kind];
+  const { Actuator } = VIEWS[part.kind];
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Enter') {
@@ -876,9 +867,7 @@ function PartView(props: {
       <g transform={placeAt(part)}>
         <rect className="part-hit" x={box.x} y={box.y} width={box.width} height={box.height} />
         <PartSymbol kind={part.kind} />
-        {part.kind === 'switch' && <Lever part={part} />}
-        {part.kind === 'button' && <Cap part={part} sim={sim} />}
-        {part.kind === 'knob' && <Knob part={part} />}
+        {Actuator && <Actuator part={part} sim={sim} />}
       </g>
       {lines.map((line, i) => {
         const at = lineAt(part, i, lines.length);
@@ -889,45 +878,6 @@ function PartView(props: {
         );
       })}
     </g>
-  );
-}
-
-/** A slide switch's lever, and the area around it that a click flips. */
-function Lever({ part }: { readonly part: PlacedPart }) {
-  return (
-    <>
-      <SwitchLever side={part.props.side === 'b' ? 'b' : 'a'} />
-      <rect className="actuator-hit" data-actuator={part.id} x="-26" y="-30" width="52" height="60" rx="8">
-        <title>Click to flip</title>
-      </rect>
-    </>
-  );
-}
-
-/** A knob's wiper and dial, turned to where it's set, and the area that turns it. */
-function Knob({ part }: { readonly part: PlacedPart }) {
-  const turn = turnOf(part.props);
-  return (
-    <>
-      <KnobWiper turn={turn} />
-      <KnobDial turn={turn} />
-      <rect className="actuator-hit" data-actuator={part.id} x={DIAL.x - 20} y={DIAL.y - 18} width="40" height="36" rx="8">
-        <title>Drag up or right to turn it towards pin 3, down or left towards pin 1</title>
-      </rect>
-    </>
-  );
-}
-
-/** A push button's cap, drawn down while it's held, and the area that presses it. */
-function Cap({ part, sim }: { readonly part: PlacedPart; readonly sim: BoardSim }) {
-  const pressed = useSyncExternalStore(sim.subscribe, () => sim.getSnapshot().parts[part.id]?.closed ?? false);
-  return (
-    <>
-      <ButtonCap pressed={pressed} />
-      <rect className="actuator-hit" data-actuator={part.id} x="-32" y="-36" width="64" height="34" rx="8">
-        <title>Hold to press</title>
-      </rect>
-    </>
   );
 }
 
@@ -958,7 +908,7 @@ function LiveUnder(props: { readonly sim: BoardSim; readonly parts: ReadonlyMap<
         const reading = snapshot.parts[part.id];
         if (!reading || reading.burnt || !reading.written) return null;
         if (part.kind === 'led') {
-          const amps = reading.amps ?? 0;
+          const amps = reading.glowAmps ?? reading.amps ?? 0;
           const overdrive = Math.min(1, Math.max(0, amps / RED_LED.maxAmps - 1));
           return (
             <circle key={part.id} cx={part.x} cy={part.y} r={58 + overdrive * 34} fill="url(#board-led-glow)" opacity={ledGlow(amps)} />
@@ -1001,7 +951,7 @@ function LiveOver(props: {
           <g key={part.id}>
             {part.kind === 'led' && reading.written && !reading.burnt && (
               <g transform={placeAt(part)} aria-hidden="true">
-                <LedLight brightness={ledGlow(reading.amps)} />
+                <LedLight brightness={ledGlow(reading.glowAmps ?? reading.amps)} />
               </g>
             )}
             {warm && (

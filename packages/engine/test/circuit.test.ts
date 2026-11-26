@@ -5,6 +5,8 @@ import {
   GROUND,
   NotWrittenYet,
   Resistor,
+  Switch,
+  TACT_SWITCH,
   TICK,
   Wire,
   type Part,
@@ -265,6 +267,52 @@ describe('Circuit, controlled currents', () => {
     const result = c.step(0);
     expect(result.converged).toBe(true);
     expectConserved(c);
+  });
+});
+
+describe('Circuit, resistance between two nodes', () => {
+  /** A 3.3 V supply between two nodes, neither of them ground: a chip's 3V3 and GND on a board with no ground symbol. */
+  function chip() {
+    const c = new Circuit();
+    const vdd = c.node('3V3');
+    const gnd = c.node('GND');
+    const pin = c.node('pin');
+    c.add(new Source('REG', vdd, gnd, 3.3));
+    return { c, vdd, gnd, pin };
+  }
+
+  it('measures a pull-up between a pin and the chip’s own ground, on a board with no ground symbol', () => {
+    const { c, vdd, gnd, pin } = chip();
+    c.add(new Resistor('RPU', pin, vdd, 45000));
+    c.step(0);
+    expect(c.resistanceBetween(pin, gnd) / 45000).toBeCloseTo(1, 6);
+    // Measured from the solver's ground instead, the whole floating board lifts with the pin: no use for a pin.
+    expect(c.resistanceBetween(pin, GROUND)).toBeGreaterThan(1e10);
+  });
+
+  it('sees an open button’s insulation, and nothing but the solver’s leak where nothing’s wired', () => {
+    const { c, vdd, gnd, pin } = chip();
+    c.add(new Switch('BTN', vdd, pin, false, TACT_SWITCH));
+    c.step(0);
+    // 100 MΩ of insulation, in parallel with the solver's 1 TΩ leaks: within about 1 %.
+    expect(c.resistanceBetween(pin, gnd) / TACT_SWITCH.openOhms).toBeCloseTo(1, 1);
+    const alone = c.node('nothing');
+    c.step(0);
+    expect(c.resistanceBetween(alone, gnd)).toBeGreaterThan(1e11);
+  });
+
+  it('counts a battery as its internal resistance, and a pair of nodes as one when they are the same', () => {
+    const c = new Circuit();
+    const plus = c.node('plus');
+    c.add(new Battery('B1', plus, GROUND, 9, 1.75));
+    c.step(0);
+    expect(c.resistanceBetween(plus, GROUND)).toBeCloseTo(1.75, 6);
+    expect(c.resistanceBetween(plus, plus)).toBe(0);
+  });
+
+  it('is infinite before anything’s been solved', () => {
+    const c = new Circuit();
+    expect(c.resistanceBetween(c.node('a'), GROUND)).toBe(Infinity);
   });
 });
 
@@ -550,5 +598,63 @@ describe('Circuit, parts that remember', () => {
     expect(c.currentThrough(counter)).toBe(0); // what it read during the tick, not after
     c.step(0);
     expect(c.currentThrough(counter)).toBe(1); // a fresh solve reads it again
+  });
+});
+
+describe('Circuit, averages over time', () => {
+  it('gives each part’s average current since it was last asked, then starts again', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    const source = c.add(new FixedCurrent('I1', GROUND, a, 0.03));
+    c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(3 * TICK); // 30 mA for three ticks…
+    source.amps = 0;
+    c.step(TICK); // …then nothing for one
+    expect(c.averageCurrents().get(source)).toBeCloseTo(0.0225, 12);
+    expect(c.averageCurrents().size).toBe(0); // no ticks since
+    c.step(0); // a solve that doesn't move time on adds nothing
+    expect(c.averageCurrents().size).toBe(0);
+  });
+
+  it('reads like a multimeter: each part’s current and power and each node’s voltage, averaged tick by tick', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    const source = c.add(new FixedCurrent('I1', GROUND, a, 0.03));
+    const load = c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(3 * TICK); // 30 mA through 100 Ω, 3 V, for three ticks…
+    source.amps = 0;
+    c.step(TICK); // …then nothing for one
+    const readout = c.takeReadout();
+    expect(readout.amps.get(load)).toBeCloseTo(0.0225, 9);
+    expect(readout.volts(a)).toBeCloseTo(2.25, 9);
+    expect(readout.volts(GROUND)).toBe(0);
+    // 0.09 W for three ticks of four: the power's average, not average volts × average amps (0.0506 W).
+    expect(readout.watts.get(load)).toBeCloseTo(0.0675, 9);
+    // And it starts again.
+    const next = c.takeReadout();
+    expect(next.amps.size).toBe(0);
+    expect(next.volts(a)).toBeUndefined();
+  });
+
+  it('reads a part added since the last readout over its own ticks', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    c.add(new FixedCurrent('I1', GROUND, a, 0.01));
+    c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(2 * TICK);
+    const late = c.add(new Resistor('R2', a, GROUND, 100));
+    c.step(2 * TICK);
+    expect(c.takeReadout().amps.get(late)).toBeCloseTo(0.005, 12);
+  });
+
+  it('averages a part added part-way over its own ticks only', () => {
+    const c = new Circuit();
+    const a = c.node('a');
+    c.add(new FixedCurrent('I1', GROUND, a, 0.01));
+    c.add(new Resistor('R1', a, GROUND, 100));
+    c.step(2 * TICK);
+    const late = c.add(new Resistor('R2', a, GROUND, 100));
+    c.step(2 * TICK);
+    expect(c.averageCurrents().get(late)).toBeCloseTo(0.005, 12); // half of 10 mA, for both of its ticks
   });
 });

@@ -1,8 +1,9 @@
-import { PN2222A, RED_LED } from '@bench/engine';
+import { ENERGIZER_522, ESP32_GPIO, FAULHABER_1516_009SR, PN2222A, RED_LED, TB6612FNG, VISHAY_1N4007 } from '@bench/engine';
 import { netsOf, type Board, type PartKind, type PinRef, type PlacedPart } from '../builder/board';
-import { CATALOG, supplyFor } from '../builder/catalog';
+import { CATALOG } from '../builder/catalog';
+import { supplyFor } from '../kinds/battery/model';
 import type { MeterState } from '../builder/meter';
-import type { BoardSnapshot, PartReading } from '../builder/sync';
+import type { BoardSnapshot, ChipPin, PartReading } from '../sim';
 import { formatSI } from '../format';
 import { GLOW_AMPS } from '../kit';
 
@@ -522,13 +523,311 @@ export const TRANSISTORS: Lesson = {
   outro: `A transistor amplifies: the current into its base lets one about ${String(Math.round(PN2222A.forwardGain))} times bigger flow from collector to emitter, until the rest of the circuit can’t give any more. Then it’s a switch, fully on. That’s how a microcontroller pin, good for a few milliamps, will run a motor. Next, a microcontroller. Build mode has the transistor too.`,
 };
 
-export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS, TRANSISTORS];
+/** Each ESP32 in the circuit (your pin model written), with its pins by id. */
+function chips({ board, snapshot }: LessonState) {
+  return ofKind(board, 'esp32').flatMap((part) => {
+    const reading = snapshot.parts[part.id];
+    return reading?.written && reading.chip ? [{ part, pins: Object.entries(reading.chip.pins) }] : [];
+  });
+}
+
+/** Any ESP32 pin, with its chip and id, that passes `test`. */
+const anyChipPin = (state: LessonState, test: (pin: ChipPin, pinId: string, chip: PlacedPart) => boolean) =>
+  chips(state).some(({ part, pins }) => pins.some(([pinId, pin]) => test(pin, pinId, part)));
+
+/** A knob's wiper wired to this pin of the chip. */
+function wiperOn(board: Board, chip: PlacedPart, pinId: string): boolean {
+  const net = netsOf(board);
+  const at = net({ part: chip.id, pin: pinId });
+  return ofKind(board, 'knob').some((knob) => net({ part: knob.id, pin: 'wiper' }) === at);
+}
+
+/** A transistor's base fed from an ESP32 pin driving HIGH: the pin's current is the base's (within 2 %). */
+const fedByChip = (state: LessonState, baseAmps: number) =>
+  baseAmps > 0 &&
+  anyChipPin(state, (pin) => pin.mode === 'output' && pin.high && pin.amps !== undefined && Math.abs(pin.amps - baseAmps) <= 0.02 * baseAmps);
+
+/** How far the knob has to be turned, in analogRead() counts, for the knob step: most of the way across 0–4095. */
+const KNOB_SPAN = 3000;
+
+export const MICROCONTROLLER: Lesson = {
+  id: 'microcontroller',
+  number: 6,
+  title: 'A microcontroller',
+  goal: 'Program an ESP32: blink an LED, read a button and the knob, then switch the LED through your transistor.',
+  parts: ['battery', 'resistor', 'led', 'button', 'knob', 'transistor', 'esp32', 'ground'],
+  steps: [
+    {
+      id: 'power',
+      title: 'Power it, and measure its 3.3 V',
+      detail:
+        'Put an ESP32 on the board. It runs off USB, so it needs no battery. Set the meter to Volts, red lead on 3V3, black on GND. Every pin works between those two: near 3.3 V reads HIGH, near 0 V reads LOW.',
+      passes: ({ board, meter, snapshot }) => {
+        const { red, black } = meter.leads;
+        if (meter.mode !== 'volts' || red?.kind !== 'pin' || black?.kind !== 'pin' || red.pin.part !== black.pin.part) return false;
+        const chip = ofKind(board, 'esp32').find((p) => p.id === red.pin.part);
+        return (
+          chip !== undefined &&
+          snapshot.parts[chip.id]?.written === true &&
+          red.pin.pin === 'v3' &&
+          (black.pin.pin === 'gnd' || black.pin.pin === 'gnd2')
+        );
+      },
+    },
+    {
+      id: 'blink',
+      title: 'Blink an LED from your program',
+      detail:
+        'Wire GPIO2 to a 330 Ω resistor, the resistor to an LED’s anode, its cathode to GND. In the ESP32’s program (select it, then Edit program): pinMode(2, OUTPUT) in setup(); in loop(), digitalWrite(2, HIGH), await delay(500), digitalWrite(2, LOW), await delay(500). Save, and it blinks: your first program, running.',
+      passes: (state) => anyChipPin(state, (pin) => pin.mode === 'output') && liveLeds(state).some((led) => (led.flips ?? 0) >= 3),
+    },
+    {
+      id: 'float',
+      title: 'Read a button, and watch it float',
+      detail:
+        'Wire a push button between 3V3 and GPIO4. In setup(): pinMode(4, INPUT); in loop(): Serial.println(digitalRead(4)), then await delay(200). Pressed, it reads HIGH. Let go, nothing holds GPIO4 to anything, so it floats: the Inspector shows “?”, and the Serial Monitor warns that a real chip could read either.',
+      passes: ({ snapshot }) => (snapshot.program?.floating.length ?? 0) > 0,
+    },
+    {
+      id: 'pull',
+      title: 'Hold it down with a pull-down',
+      detail:
+        'Change INPUT to INPUT_PULLDOWN. The chip’s own 45 kΩ resistor now holds GPIO4 to GND, so it reads LOW until you press the button, and HIGH while you hold it. Press it twice.',
+      passes: (state) => anyChipPin(state, (pin) => (pin.mode === 'pulldown' || pin.mode === 'pullup') && pin.changes >= 3),
+    },
+    {
+      id: 'knob',
+      title: 'Read the knob as a number',
+      detail:
+        'Wire the knob’s two end pins to 3V3 and GND, and its wiper to GPIO34. In loop(): Serial.println(analogRead(34)), then await delay(200). Turn it from one end to the other: the number runs from 0 to 4095, the chip measuring the wiper’s voltage.',
+      passes: (state) =>
+        anyChipPin(
+          state,
+          (pin, pinId, chip) =>
+            pin.analogRange !== undefined && pin.analogRange[1] - pin.analogRange[0] >= KNOB_SPAN && wiperOn(state.board, chip, pinId),
+        ),
+    },
+    {
+      id: 'drive',
+      title: 'Switch a bigger load through your transistor',
+      detail: `A pin gives about ${ma(ESP32_GPIO.sourceAmps)} at most, and a motor needs far more. So let a pin drive your transistor: GPIO5 → 10 kΩ → base, emitter → GND. For the load, the 9 V battery → 330 Ω → LED → collector, and the battery’s − to the ESP32’s GND: the two circuits must share a ground. Blink GPIO5 from your program.`,
+      passes: (state) =>
+        transistors(state).some((q) => q.state === 'on' && litByCollector(state, q.collectorAmps) && fedByChip(state, q.baseAmps)),
+    },
+  ],
+  outro:
+    'A microcontroller reads the world as HIGH, LOW or a number, and answers through its pins: a few milliamps each, so a transistor does the heavy lifting. Next, motors: a transistor switching something that fights back. Build mode has the ESP32 too.',
+};
+
+
+/** Each motor that's in the circuit, with what it's doing. */
+function motors({ board, snapshot }: LessonState) {
+  return ofKind(board, 'motor').flatMap((part) => {
+    const reading = snapshot.parts[part.id];
+    return reading?.written && reading.motor ? [{ part, amps: reading.amps ?? 0, volts: reading.volts, ...reading.motor }] : [];
+  });
+}
+
+/**
+ * Its current is what's left of the volts across it after its back-EMF, through its winding (to 5 %): it pushes back.
+ * One that doesn't draws all its volts allow, however fast it turns.
+ */
+const pushesBack = (m: { readonly volts: number; readonly backEmf: number; readonly amps: number }) =>
+  Math.abs(m.volts - m.backEmf - m.amps * MOTOR.ohms) <= 0.05 * Math.abs(m.volts);
+
+const MOTOR = FAULHABER_1516_009SR;
+
+/** Held still on the 9 V battery: only the winding and the battery's own resistance hold the current back. */
+const STALL_AMPS = ENERGIZER_522.volts / (MOTOR.ohms + ENERGIZER_522.ohms);
+
+/** Turning at least this fast counts as up to speed: three quarters of what its datasheet gives with nothing on it. */
+const UP_TO_SPEED = 0.75 * MOTOR.noLoadRpm;
+
+/** A diode across a motor, the right way round to catch its kick: its band (cathode) to the motor's +. */
+function diodeAcrossMotor(board: Board): boolean {
+  const net = netsOf(board);
+  return ofKind(board, 'diode').some((diode) =>
+    ofKind(board, 'motor').some(
+      (motor) =>
+        net({ part: diode.id, pin: 'cathode' }) === net({ part: motor.id, pin: 'plus' }) &&
+        net({ part: diode.id, pin: 'anode' }) === net({ part: motor.id, pin: 'minus' }),
+    ),
+  );
+}
+
+/** A motor carrying a transistor's collector current (within 2 %, as for an LED). */
+const motorOnCollector = (state: LessonState, collectorAmps: number | undefined) =>
+  collectorAmps !== undefined && collectorAmps > 0 && motors(state).some((m) => Math.abs(m.amps - collectorAmps) <= 0.02 * collectorAmps);
+
+const volts = (v: number) => formatSI(v, 'V', { trim: true });
+
+export const MOTORS: Lesson = {
+  id: 'motors',
+  number: 7,
+  title: 'Motors',
+  goal: 'Spin a motor, feel it fight back, switch it from your program, catch the kick it gives, and slow it with PWM.',
+  parts: ['battery', 'resistor', 'led', 'button', 'knob', 'transistor', 'diode', 'motor', 'esp32', 'ground'],
+  steps: [
+    {
+      id: 'spin',
+      title: 'Spin it from the battery',
+      detail: `Wire the 9 V battery’s + to the motor’s +, and the motor’s − back to the battery’s −. Select it: turning freely, it draws only about ${ma(MOTOR.noLoadAmps)}. Guess before the next step: held still, will it draw more, or less?`,
+      // Up to speed on a running motor's current, pushing back: one that doesn't yet only runs away, and on a small enough
+      // current (through a resistor, or from a pin) it passes the speed with little current too.
+      passes: (state) =>
+        motors(state).some((m) => !m.held && Math.abs(m.rpm) >= UP_TO_SPEED && Math.abs(m.amps) <= 2 * MOTOR.noLoadAmps && pushesBack(m)),
+    },
+    {
+      id: 'hold',
+      title: 'Hold its shaft',
+      detail: `Press and hold the middle of the motor (or Hold its shaft, in the Inspector). Its current jumps back up, to about ${ma(STALL_AMPS)}: the battery’s ${volts(ENERGIZER_522.volts)} over the motor’s ${String(MOTOR.ohms)} Ω winding and the battery’s own ${String(ENERGIZER_522.ohms)} Ω. Turning, a motor is also a generator: it makes a voltage of its own (“Pushing back as it turns”), and only what’s left over drives current. Held still, there’s none, and everything it draws turns to heat: more than the ${ma(MOTOR.ratedAmps)} it can carry for long. Let go, and it’s back up to speed in a fraction of a second.`,
+      passes: (state) => motors(state).some((m) => m.held && m.amps >= 0.75 * STALL_AMPS),
+    },
+    {
+      id: 'switch',
+      title: 'Switch it from your program',
+      detail: `As in Lesson 6: GPIO5 → 1 kΩ → the transistor’s base, its emitter → GND. The motor goes where the LED was: battery + → motor + → motor − → collector, and the battery’s − to the ESP32’s GND. Use 1 kΩ, not 10 kΩ: starting, the motor wants ${ma(STALL_AMPS)}, and through 10 kΩ the base gets too little for its gain of about ${String(Math.round(PN2222A.forwardGain))} to let that much through. In your program, turn GPIO5 on for a second and off for a second, over and over.`,
+      passes: (state) =>
+        transistors(state).some((q) => q.state === 'on' && motorOnCollector(state, q.collectorAmps) && fedByChip(state, q.baseAmps)),
+    },
+    {
+      id: 'kick',
+      title: 'Meet the kick',
+      detail: `Select the transistor and watch “Highest in the last second” as GPIO5 goes LOW. A coil’s current can’t stop at once: switched off, the motor’s winding pushes the collector up until something gives. Here that’s the transistor itself, breaking down at its ${volts(PN2222A.maxCollectorVolts)} rating, and the warning shows. It’s over in about a millionth of a second, far too fast to see any other way.`,
+      passes: (state) => motors(state).length > 0 && transistors(state).some((q) => (q.highestVolts ?? 0) > PN2222A.maxCollectorVolts),
+    },
+    {
+      id: 'catch',
+      title: 'Catch it with a diode',
+      detail: `Put a diode across the motor, its band (the cathode) to the motor’s +. It points the wrong way to carry anything while the motor runs. Switched off, the winding’s current goes round through it instead, and the collector stops just above the battery, a diode’s drop over it. A ${String(VISHAY_1N4007.ratedAmps)} A 1N4007 is the usual one.`,
+      passes: (state) => {
+        const battery = biggestBattery(state.board);
+        return (
+          battery !== undefined &&
+          diodeAcrossMotor(state.board) &&
+          transistors(state).some((q) => q.highestVolts !== undefined && q.highestVolts > battery && q.highestVolts < PN2222A.maxCollectorVolts)
+        );
+      },
+    },
+    {
+      id: 'speed',
+      title: 'Slow it down with PWM',
+      detail:
+        'Your dimmer from Lesson 6, on GPIO5: on for 5 ms, off for 5 ms, over and over. Guess first: half on, so half speed? Try it. Then find an on and off that really slows it, to under three quarters of full speed. (The diode stays: it catches a kick a hundred times a second now.)',
+      // Settled there, averaged through the ripple: a motor speeding up from rest passes through the range on its way.
+      passes: (state) =>
+        state.snapshot.readout !== undefined &&
+        motors(state).some((m) => {
+          const rpm = Math.abs(m.averageRpm ?? 0);
+          return !m.held && m.steady && rpm >= 0.1 * MOTOR.noLoadRpm && rpm <= 0.75 * MOTOR.noLoadRpm;
+        }),
+    },
+  ],
+  outro:
+    'A motor is a resistor, a coil and a generator in one: it draws most starting and held still, least running free, and its coil kicks when switched off, so a diode goes across it. With nothing to turn, it coasts through PWM’s off-time, so half on is nearly full speed: it only slows once the on-time can barely keep up with its friction. Next, direction: a motor driver that runs it both ways, and stops it two ways. Build mode has the motor and diode too.',
+};
+
+/** Each motor driver that's in the circuit, with what it reads. */
+function drivers({ board, snapshot }: LessonState) {
+  return ofKind(board, 'driver').flatMap((part) => {
+    const reading = snapshot.parts[part.id];
+    return reading?.written && reading.driver ? [{ part, ...reading.driver }] : [];
+  });
+}
+
+/** Each motor wired across a driver's channel (its two pins on that channel's two outputs), with the channel. */
+function driven(state: LessonState) {
+  const net = netsOf(state.board);
+  return drivers(state).flatMap((driver) =>
+    (['a', 'b'] as const).flatMap((side, index) => {
+      const outputs = [net({ part: driver.part.id, pin: `${side}o1` }), net({ part: driver.part.id, pin: `${side}o2` })];
+      return motors(state)
+        .filter((m) => {
+          const ends = [net({ part: m.part.id, pin: 'plus' }), net({ part: m.part.id, pin: 'minus' })];
+          return ends[0] !== ends[1] && ends.every((end) => outputs.includes(end));
+        })
+        .map((motor) => ({ driver, channel: driver.channels[index === 0 ? 0 : 1], motor }));
+    }),
+  );
+}
+
+/** Still turning, enough to watch it stop: a hundred rpm. */
+const TURNING_RPM = 100;
+
+export const DIRECTION: Lesson = {
+  id: 'direction',
+  number: 8,
+  title: 'Direction',
+  goal: 'Run a motor both ways through a driver chip, stop it two ways, and see why braking makes PWM work at last.',
+  parts: ['battery', 'resistor', 'led', 'button', 'transistor', 'diode', 'motor', 'driver', 'esp32', 'ground'],
+  steps: [
+    {
+      id: 'wire',
+      title: 'Wire up the driver',
+      detail: `Put a Motor driver on the board. Its left side talks to the ESP32: VCC to 3V3, GND to GND, and STBY to 3V3 for now (HIGH: awake). Its right side runs the motor: VM to the 9 V battery’s +, the motor across AO1 and AO2, and its other GND to the battery’s −. Select it: its logic is yours to write, and the Your turn card has the jobs. Job 1 is enough to begin.`,
+      passes: (state) =>
+        driven(state).some(({ driver }) => driver.powered && driver.awake && driver.motorVolts >= TB6612FNG.minMotorVolts),
+    },
+    {
+      id: 'forward',
+      title: 'Forward',
+      detail:
+        'Wire three GPIOs to AIN1, AIN2 and PWMA (GPIO21, 19 and 18 will do). In your program: AIN1 HIGH, AIN2 LOW, PWMA HIGH. The chip switches AO1 to the battery and AO2 to ground, and the motor gets the whole 9 V, less half an ohm of switches.',
+      passes: (state) =>
+        driven(state).some(({ channel, motor }) => channel.mode === 'forward' && Math.abs(motor.rpm) >= UP_TO_SPEED && pushesBack(motor)),
+    },
+    {
+      id: 'backwards',
+      title: 'Backwards',
+      detail:
+        'Swap them: AIN1 LOW, AIN2 HIGH. Guess first: what does the Speed row show? With a transistor you could only switch a motor on and off; four switches put the battery across it either way round. That’s an H-bridge.',
+      passes: (state) =>
+        driven(state).some(({ channel, motor }) => channel.mode === 'reverse' && Math.abs(motor.rpm) >= UP_TO_SPEED && pushesBack(motor)),
+    },
+    {
+      id: 'coast',
+      title: 'Let it coast',
+      detail:
+        'Now stop it: AIN1 and AIN2 both LOW. Every switch lets go, so nothing flows through the motor, and only its friction slows it. Watch the Speed row: how long does it take to stop?',
+      passes: (state) =>
+        driven(state).some(
+          ({ channel, motor }) => channel.mode === 'coast' && Math.abs(motor.rpm) >= TURNING_RPM && Math.abs(motor.amps) < 1e-3,
+        ),
+    },
+    {
+      id: 'brake',
+      title: 'Brake it',
+      detail:
+        'Run it again, then stop it with AIN1 and AIN2 both HIGH. Guess first: faster or slower than coasting? Both its ends are joined to ground now, and a spinning motor is a generator: its own back-EMF pushes current backwards through its winding (watch the current’s sign), and that current’s torque fights the spin.',
+      passes: (state) =>
+        driven(state).some(
+          ({ channel, motor }) =>
+            channel.mode === 'brake' && Math.abs(motor.rpm) >= TURNING_RPM && motor.amps * motor.rpm < 0 && Math.abs(motor.amps) > 0.01,
+        ),
+    },
+    {
+      id: 'half',
+      title: 'Half speed, at last',
+      detail:
+        'AIN1 HIGH, AIN2 LOW, and your dimmer on PWMA: 5 ms on, 5 ms off. In Lesson 7, half on was nearly full speed, about 12 000 rpm. Guess first: what now? (PWMA LOW brakes, like both inputs HIGH.)',
+      passes: (state) =>
+        state.snapshot.readout !== undefined &&
+        driven(state).some(({ motor }) => {
+          const rpm = Math.abs(motor.averageRpm ?? 0);
+          return !motor.held && motor.steady && rpm >= 0.35 * MOTOR.noLoadRpm && rpm <= 0.65 * MOTOR.noLoadRpm;
+        }),
+    },
+  ],
+  outro:
+    'An H-bridge puts the battery across a motor either way round, and stops it two ways: let go, and it coasts on its friction; join its ends, and it brakes on its own back-EMF. Braking through every off-time is why PWM through a driver finally gives half speed at half on. Next, power: running the ESP32 from the battery through its regulator, and what happens when the battery can’t keep up. Build mode has the driver too.',
+};
+
+export const LESSONS: readonly Lesson[] = [LIGHT_AN_LED, SWITCHES_AND_BUTTONS, A_KNOB, CAPACITORS, TRANSISTORS, MICROCONTROLLER, MOTORS, DIRECTION];
 
 export const lessonById = (id: string) => LESSONS.find((lesson) => lesson.id === id);
 
 /** What's coming, from the roadmap: shown locked, so the path ahead is visible. */
 export const COMING: readonly { readonly number: number; readonly title: string; readonly blurb: string }[] = [
-  { number: 6, title: 'A microcontroller', blurb: 'An ESP32 runs your code and reads your buttons and your knob: floating inputs, pull-ups, and a voltage as a number.' },
-  { number: 7, title: 'Motors', blurb: 'H-bridges, flyback diodes and brownouts, where your capacitors and transistors come back.' },
-  { number: 8, title: 'The car', blurb: 'A 2D robot body, steered by your phone.' },
+  { number: 9, title: 'Power', blurb: 'The ESP32 from a battery, through its regulator, and what happens when the battery can’t keep up.' },
+  { number: 10, title: 'The car', blurb: 'A 2D robot body, steered by your phone.' },
 ];

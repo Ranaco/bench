@@ -21,7 +21,11 @@ import { freeSpot, partBox } from './route';
 import { afterSplits, METER_START, type MeterMode, type MeterState, type ProbeTarget, type Tool } from './meter';
 import { loadBoard, saveBoard } from './save';
 import { all, isEmpty, NOTHING, prune, type Selection } from './selection';
-import { BoardSim } from './sync';
+import { BoardSim } from '../sim';
+import type { ModuleSource } from '@bench/engine';
+import type { CodeFor } from '../sim';
+import { SHARED_PROGRAM } from '../program/source';
+import { WorkerTransport } from '../program/transport';
 import { useHistory } from './useHistory';
 
 /**
@@ -152,15 +156,54 @@ function clipCentre(clip: Clip): Point {
 /** True while the user has text selected on the page (an error message, say), so Ctrl+C copies that instead. */
 const textSelected = () => (window.getSelection()?.toString() ?? '') !== '';
 
+/** Where a session's board comes from and goes to, and how its parts and programs run. */
+export interface SessionSource {
+  /** The board to start from, if there's one saved. */
+  readonly load: () => Board | undefined;
+  /** Called with the board after every change. */
+  readonly save: (board: Board) => void;
+  /** Which code each part runs: Bench's bundled code unless given. */
+  readonly codeFor?: CodeFor;
+  /** Each ESP32's program, as text, by the chip's part id. */
+  readonly programFor?: (id: string) => ModuleSource;
+  /** Parts were copied (duplicated or pasted): new part id by the id of the part it's a copy of. */
+  readonly copied?: (renamed: ReadonlyMap<string, string>) => void;
+}
+
+/** A board kept in this browser's storage, under `key`: a lesson's. */
+export const storedBoard = (key: string): Pick<SessionSource, 'load' | 'save'> => ({
+  load: () => loadBoard(key),
+  save: (board) => {
+    saveBoard(key, board);
+  },
+});
+
 /**
- * Creates a session: loads the board saved under `storageKey`, keeps the live
- * circuit in step with it, runs it in real time, saves every change, and
- * handles the board's keyboard shortcuts.
+ * Creates a session: loads the board from `source`, keeps the live circuit in step with it, runs it in real time,
+ * saves every change, and handles the board's keyboard shortcuts.
  */
-export function useSessionState(storageKey: string, parts: readonly PartKind[]): Session {
-  const history = useHistory(() => loadBoard(storageKey) ?? EMPTY_BOARD);
+export function useSessionState(source: SessionSource, parts: readonly PartKind[]): Session {
+  const history = useHistory(() => source.load() ?? EMPTY_BOARD);
   const board = history.present;
-  const [sim] = useState(() => new BoardSim());
+  // An ESP32's program runs in a worker, so a loop that never ends can be stopped instead of freezing the page.
+  // The latest source: a lesson makes a new one each time it draws, with the same storage behind it.
+  const latest = useRef(source);
+  useEffect(() => {
+    latest.current = source;
+  });
+  const [sim] = useState(
+    () => new BoardSim((_chip, _id, program) => new WorkerTransport(program), source.codeFor, source.programFor ?? (() => SHARED_PROGRAM)),
+  );
+
+  // New code for the parts: those whose code changed are rebuilt with it.
+  const { codeFor, programFor } = source;
+  useEffect(() => {
+    if (codeFor) sim.setCode(codeFor);
+  }, [sim, codeFor]);
+  // A program that changed starts again from the top, on its chip only.
+  useEffect(() => {
+    if (programFor) sim.setPrograms(programFor);
+  }, [sim, programFor]);
   const [picked, select] = useState<Selection>(NOTHING);
   const selection = prune(board, picked); // undo can take selected things away
   const [ghost, setGhost] = useState<Session['ghost']>(undefined);
@@ -177,8 +220,8 @@ export function useSessionState(storageKey: string, parts: readonly PartKind[]):
   // The circuit follows the board, and the board is saved as it changes.
   useEffect(() => {
     sim.sync(board);
-    saveBoard(storageKey, board);
-  }, [sim, board, storageKey]);
+    latest.current.save(board);
+  }, [sim, board]);
 
   // Real time: one step per animation frame, whichever windows are showing.
   useEffect(() => {
@@ -223,6 +266,7 @@ export function useSessionState(storageKey: string, parts: readonly PartKind[]):
     const pasted = pasteClip(board, usable, dx, dy);
     history.commit(() => pasted.board);
     select({ parts: pasted.parts, wires: pasted.wires });
+    latest.current.copied?.(pasted.renamed);
   };
 
   const copy = () => {
@@ -261,6 +305,8 @@ export function useSessionState(storageKey: string, parts: readonly PartKind[]):
       if (target instanceof HTMLTextAreaElement) return;
       if (target instanceof HTMLInputElement && (target.type !== 'range' || key.startsWith('arrow'))) return;
       if (target instanceof HTMLElement && target.closest('[role="separator"], [role="menu"], .dv-tabs-container')) return;
+      // Typing in the code editor (it doesn't always type into a textarea): its keys are its own.
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('.monaco-editor'))) return;
 
       if (event.ctrlKey || event.metaKey) {
         if (key === 'z' && !event.shiftKey) history.undo();

@@ -1,14 +1,25 @@
 import type { DockviewApi } from 'dockview-react';
 import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import { PALETTE } from '../builder/catalog';
-import { SessionContext, useSessionState } from '../builder/session';
+import { SessionContext, useSession, useSessionState, type SessionSource } from '../builder/session';
 import type { Lesson } from '../lessons/lessons';
 import { LessonContext, useLessonProgress } from '../lessons/progress';
 import { Dock } from './Dock';
 import { openWindow, type Mode, type WindowId } from './layout';
 import { ShowWindowContext } from './show';
 import { WindowsMenu } from './WindowsMenu';
-import { BoardWindow, GraphWindow, InspectorWindow, LessonWindow, MeterWindow, PartsWindow, SpecWindow, View3dWindow } from './windows';
+import {
+  BoardWindow,
+  CodeWindow,
+  GraphWindow,
+  InspectorWindow,
+  LessonWindow,
+  MeterWindow,
+  PartsWindow,
+  SerialWindow,
+  SpecWindow,
+  View3dWindow,
+} from './windows';
 
 /** Below this width the windows stack in one scrolling column instead of docking. */
 const NARROW = '(max-width: 900px)';
@@ -30,9 +41,18 @@ function useMediaQuery(query: string): boolean {
  * A lesson's workspace, or Build's: a board session (and the lesson being
  * played) shared by every window, the header's board actions, and the dock.
  */
-export function Workspace({ lesson, nav }: { readonly lesson: Lesson | undefined; readonly nav: ReactNode }) {
+export function Workspace({
+  lesson,
+  source,
+  nav,
+}: {
+  readonly lesson: Lesson | undefined;
+  /** Where the board comes from and is saved, and how its parts and programs run. */
+  readonly source: SessionSource;
+  readonly nav: ReactNode;
+}) {
   const mode: Mode = lesson ? 'lessons' : 'build';
-  const session = useSessionState(lesson ? `bench.lesson.${lesson.id}.board` : 'bench.board', lesson?.parts ?? PALETTE);
+  const session = useSessionState(source, lesson?.parts ?? PALETTE);
   const progress = useLessonProgress(lesson, session.sim, session.board, session.meter);
   const narrow = useMediaQuery(NARROW);
   const [api, setApi] = useState<DockviewApi | undefined>(undefined);
@@ -103,13 +123,19 @@ function Stacked3d() {
           {open ? 'Close it' : 'Open it'}
         </button>
       </div>
-      {open ? <View3dWindow /> : <p className="stack-3d-note">The knob as the real part: turn it, take it apart, look at every piece.</p>}
+      {open ? <View3dWindow /> : <p className="stack-3d-note">Parts as the real things: pick one, take it apart, look at every piece.</p>}
     </section>
   );
 }
 
-/** Phones and narrow windows: every window in one column, the page scrolling as usual. */
+/**
+ * Phones and narrow windows: every window in one column, the page scrolling as usual. The Serial Monitor joins them
+ * while there's an ESP32 on the board (a program to print anything).
+ */
 function Stacked({ mode }: { readonly mode: Mode }) {
+  const { sim } = useSession();
+  // Just whether there's a program: this re-renders when one comes or goes, not every frame.
+  const programmed = useSyncExternalStore(sim.subscribe, () => sim.getSnapshot().program !== undefined);
   return (
     <main className="stacked">
       {mode === 'lessons' && (
@@ -126,8 +152,10 @@ function Stacked({ mode }: { readonly mode: Mode }) {
           ['parts', 'Parts', PartsWindow],
           ['meter', 'Meter', MeterWindow],
           ['inspector', 'Inspector', InspectorWindow],
+          ...(programmed ? ([['serial', 'Serial Monitor', SerialWindow]] as const) : []),
           ['spec', 'Spec sheet', SpecWindow],
           ['graph', 'Graph', GraphWindow],
+          ['code', 'Code', CodeWindow],
         ] as const
       ).map(([id, title, Window]) => (
         <section key={id} id={`stack-${id}`} className="stack-card" aria-label={title}>

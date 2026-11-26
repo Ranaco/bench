@@ -1,8 +1,22 @@
 import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+import { benchBundledLessons, benchFiles } from './server/files.ts';
+
+/** Monaco's ESM folder (through this app's node_modules link, which Vite follows to the real one). */
+const MONACO_VS = fileURLToPath(new URL('./node_modules/monaco-editor/esm/vs', import.meta.url)).split('\\').join('/');
 
 export default defineConfig({
-  plugins: [react()],
+  // benchFiles: your home folder, read and written through the dev server; benchBundledLessons: your lesson code, in a
+  // build (see server/files.ts).
+  plugins: [react(), benchFiles(), benchBundledLessons()],
+  resolve: {
+    alias: [
+      // monaco-vim still imports Monaco's files by their old paths (monaco-editor/esm/vs/…), which Monaco 0.57's package
+      // map no longer allows. Point them at the same files, so both share one Monaco.
+      { find: /^monaco-editor\/esm\/vs\/(.*)$/, replacement: `${MONACO_VS}/$1.js` },
+    ],
+  },
   server: {
     port: 5180,
     // Wait for a file to finish being written before reloading it. Without this, two quick saves
@@ -10,10 +24,13 @@ export default defineConfig({
     watch: { awaitWriteFinish: { stabilityThreshold: 150, pollInterval: 25 } },
   },
   build: {
-    // three.js is the whole library, about 740 kB (react-three-fiber registers every class it has, so none can be
-    // left out), and it can't be split further. It's in a file of its own that loads only when the 3D window opens:
-    // nothing that big loads with the page.
-    chunkSizeWarningLimit: 800,
+    // Two things are bigger than this, and neither loads with the page:
+    //   - three.js, about 740 kB (react-three-fiber registers every class it has, so none can be left out): only when
+    //     the 3D window opens;
+    //   - the code editor, Monaco, with TypeScript itself in its worker (about 6.8 MB: the whole compiler, which is what
+    //     checks your code as you type): only when the Code window opens.
+    // Neither can be split further. The page's own code stays well under 800 kB.
+    chunkSizeWarningLimit: 7000,
     rolldownOptions: {
       output: {
         // The big libraries each get a file of their own, cached across releases of Bench.

@@ -1,6 +1,6 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { COMING, LESSONS } from '../lessons/lessons';
-import { readProgress } from '../lessons/progress';
+import { isFinished, readProgress } from '../lessons/progress';
 import { HREF } from '../routes';
 import { useRoving } from './roving';
 
@@ -35,7 +35,7 @@ export function LessonSelect() {
           {LESSONS.map((lesson, i) => {
             const done = readProgress(lesson).size;
             const total = lesson.steps.length;
-            const finished = done === total;
+            const finished = isFinished(lesson);
             const props = roving.item(i);
             return (
               <li key={lesson.id} style={{ '--i': i } as CSSProperties}>
